@@ -1,0 +1,12 @@
+{
+    "name": "@revenge-mod/devtools-server",
+    "version": "1.0.0",
+    "type": "module",
+    "exports": "./src/index.ts",
+    "scripts": {
+        "start": "bun run src/index.ts"
+    },
+    "dependencies": {
+        "@revenge-mod/devtools-shared": "workspace:*"
+    }
+}
