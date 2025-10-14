@@ -141,7 +141,7 @@ Expose a variable to the server execution scope.
 
 ##### `clearVars(): void`
 
-Clear all exposed variables from the scope.
+Clear all saved variables. Not the scope itself!
 
 ##### `log(level: LogLevel, message: any[]): void`
 
