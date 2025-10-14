@@ -207,6 +207,11 @@ function handleLog(ws: WebSocket, msg: LogMessage) {
 	}
 }
 
+/**
+ * Broadcast a message to all authenticated clients.
+ *
+ * @param message - Message to send to all clients
+ */
 export function broadcast(message: Message) {
 	const payload = serialize(message)
 	for (const [ws, data] of clients.entries()) {
@@ -216,6 +221,13 @@ export function broadcast(message: Message) {
 	}
 }
 
+/**
+ * Send a message to a specific client by ID.
+ *
+ * @param clientId - ID of the client to send to
+ * @param message - Message to send
+ * @returns `true` if the message was sent, `false` if client not found
+ */
 export function sendToClient(clientId: string, message: Message) {
 	const payload = serialize(message)
 	for (const [ws, data] of clients.entries()) {
