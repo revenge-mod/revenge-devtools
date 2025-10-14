@@ -2,6 +2,7 @@
     "name": "@revenge-mod/devtools-shared",
     "version": "1.0.0",
     "type": "module",
+    "license": "CC0-1.0",
     "exports": {
         "./types": "./src/types.ts",
         "./constants": "./src/constants.ts",

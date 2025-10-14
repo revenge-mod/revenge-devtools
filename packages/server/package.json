@@ -1,13 +1,19 @@
 {
     "name": "@revenge-mod/devtools-server",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "type": "module",
+    "license": "CC0-1.0",
     "exports": "./src/index.ts",
     "bin": {
         "revenge-devtools": "./bin/revenge-devtools.js"
     },
+    "files": [
+        "dist",
+        "bin"
+    ],
     "scripts": {
-        "start": "bun run src/index.ts"
+        "start": "bun run src/index.ts",
+        "build": "bunx tsdown --dts --treeshake --target esnext --tsconfig ../../tsconfig.json"
     },
     "dependencies": {
         "@parcel/watcher": "^2.5.1",
@@ -16,6 +22,10 @@
     },
     "devDependencies": {
         "@types/node": "^22.0.0",
-        "@types/ws": "^8.5.13"
+        "@types/ws": "^8.5.13",
+        "tsdown": "^0.15.7"
+    },
+    "publishConfig": {
+        "access": "public"
     }
 }
