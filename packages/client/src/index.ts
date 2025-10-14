@@ -26,8 +26,7 @@ export class DevToolsClient {
 	static version = PROTOCOL_VERSION
 	ws: WebSocket | null = null
 	settings: ClientSettings = DEFAULT_SETTINGS.client
-	vars: Record<string, any> = {}
-	private scope: Record<string, any> = { devTools: this, vars: this.vars }
+	private scope: Record<string, any> = { devTools: this, vars: {} }
 	private connected: boolean = false
 	private authenticated: boolean = false
 	private handlers = new Map<number, Set<MessageHandler>>()
@@ -77,7 +76,7 @@ export class DevToolsClient {
 	}
 
 	clearVars() {
-		this.vars = {}
+		this.scope.vars = {}
 	}
 
 	expose(key: string, value: any) {
@@ -138,7 +137,7 @@ export class DevToolsClient {
 
 			// Wrap code to auto-return last expression
 			const wrappedCode = this.wrapCodeWithAutoReturn(msg.data.code)
-			const func = new Function(...Object.keys(scope), wrappedCode)
+			const func = this.withScope(scope, wrappedCode)
 			const result = func(...Object.values(scope))
 
 			this.log(LogLevel.Default, [
@@ -180,10 +179,16 @@ export class DevToolsClient {
 			: `return (${lastLine})`
 	}
 
+	private withScope(scope: Record<string, unknown>, code: string) {
+		return new Function(...Object.keys(scope), code)
+	}
+
 	private resolveMapping(path: string): any {
 		try {
-			const func = new Function('vars', `return ${path}`)
-			return func(this.vars)
+			return this.withScope(
+				this.scope,
+				this.wrapCodeWithAutoReturn(path),
+			)(...Object.values(this.scope))
 		} catch {
 			return undefined
 		}
