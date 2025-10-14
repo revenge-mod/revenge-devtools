@@ -3,11 +3,21 @@ import chalk from 'chalk'
 let currentPrompt = ''
 let currentLine = ''
 
+/**
+ * Set the current prompt for preservation during logging.
+ * This ensures the prompt is restored after log output.
+ *
+ * @param prompt - The prompt string (e.g., "> ")
+ * @param line - The current input line
+ */
 export function setPrompt(prompt: string, line: string = '') {
 	currentPrompt = prompt
 	currentLine = line
 }
 
+/**
+ * Clear the current input line while preserving the prompt.
+ */
 export function clearPromptLine() {
 	currentLine = ''
 }
@@ -64,6 +74,13 @@ export const logger = {
 	},
 }
 
+/**
+ * Create a logger instance for a specific client.
+ * Each method prefixes output with the client ID in a colored format.
+ *
+ * @param id - Client identifier
+ * @returns Logger instance with client-specific formatting
+ */
 export function createClientLogger(id: string) {
 	return {
 		debug(...args: any[]) {

@@ -1,5 +1,9 @@
 import type { Settings } from './types'
 
+/**
+ * Log levels for filtering and categorizing messages.
+ * Lower values indicate more verbose logging.
+ */
 export const LogLevel = {
 	Debug: 0,
 	Default: 1,
@@ -7,6 +11,9 @@ export const LogLevel = {
 	Error: 3,
 } as const
 
+/**
+ * WebSocket message types for client-server communication.
+ */
 export const MessageType = {
 	/**
 	 * "Hello, I'm client, version (x)."
@@ -28,6 +35,9 @@ export const MessageType = {
 	Run: 4,
 } as const
 
+/**
+ * Default settings for client and server.
+ */
 export const DEFAULT_SETTINGS: Settings = {
 	client: {
 		log: {
@@ -43,6 +53,8 @@ export const DEFAULT_SETTINGS: Settings = {
 	},
 }
 
+/**
+ * Current protocol version for client-server compatibility.
+ * Clients and servers with different versions may be incompatible.
+ */
 export const PROTOCOL_VERSION = 2
-
-export const MAX_DEPTH_MESSAGE = '[MAX DEPTH REACHED]'

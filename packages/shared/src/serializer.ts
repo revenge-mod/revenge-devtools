@@ -1,6 +1,8 @@
 /** biome-ignore-all lint/complexity/noBannedTypes: don't care */
 
-import superjson from 'superjson'
+import SuperJSON from 'superjson'
+
+const superjson = new SuperJSON()
 
 superjson.registerCustom<Function, string>(
 	{
@@ -22,7 +24,6 @@ superjson.registerCustom<symbol, string>(
 	'symbol',
 )
 
-// Handle objects with Symbol.toStringTag
 superjson.registerCustom<object, string>(
 	{
 		isApplicable: (v): v is object => {
@@ -63,7 +64,6 @@ superjson.registerCustom<object, string>(
 	'toStringTag',
 )
 
-// Marker classes for max depth indicators
 class MaxDepthObject {
 	// Custom inspect for Node.js environments
 	get [Symbol.for('nodejs.util.inspect.custom')]() {
@@ -164,7 +164,6 @@ class MaxDepthGetterSetter {
 	}
 }
 
-// Register custom types for max depth markers
 superjson.registerClass(MaxDepthObject, {
 	identifier: 'MaxDepthObject',
 	allowProps: [],
@@ -279,5 +278,19 @@ export function createDepthLimitedProxy<T extends object>(
 	})
 }
 
+/**
+ * Serialize a value to JSON string using superjson with custom transformers.
+ * Handles functions, symbols, and special objects gracefully.
+ *
+ * @param value - Value to serialize
+ * @returns JSON string representation
+ */
 export const serialize = superjson.stringify
+
+/**
+ * Deserialize a JSON string back to its original value using superjson.
+ *
+ * @param json - JSON string to deserialize
+ * @returns Deserialized value
+ */
 export const deserialize = superjson.parse

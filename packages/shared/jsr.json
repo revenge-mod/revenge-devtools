@@ -1,10 +1,10 @@
 {
-    "name": "@revenge-mod/devtools-shared",
-    "version": "1.0.0",
-    "exports": {
-        "./types": "./src/types.ts",
-        "./constants": "./src/constants.ts",
-        "./logger": "./src/logger.ts",
-        "./serializer": "./src/serializer.ts"
-    }
+	"name": "@revenge-mod/devtools-shared",
+	"version": "1.0.0",
+	"exports": {
+		"./types": "./src/types.ts",
+		"./constants": "./src/constants.ts",
+		"./logger": "./src/logger.ts",
+		"./serializer": "./src/serializer.ts"
+	}
 }
