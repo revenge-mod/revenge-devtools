@@ -1,25 +1,35 @@
 # 👷 Revenge Developer Tools
 
-Debugging tools for modifying React Native apps in runtime.
-
+Debugging tools for modifying React Native apps in runtime.  
 Comes with serializer, logger, and a simple WebSocket server + client.
 
-## Setup
+## ⬇️ Install
 
-```bash
-bun install
+### 💻 Server
+
+```sh
+bun install --global @revenge-mod/devtools-server
 ```
 
-## Server
+You can start the server with:
 
-```bash
-cd packages/server
-bun start
+```sh
+revenge-devtools
+# or see options
+revenge-devtools --help
 ```
 
-Server runs on `ws://localhost:7864` by default. Set `PORT` environment variable to change.
+The server runs on `ws://localhost:7864` by default. Pass in `--port <port>` to change the port.
 
-## Client (React Native)
+### ⚛️ Client (React Native)
+
+> The client package is only published on [JSR](https://jsr.io). To install it, run the following command:
+>
+> ```sh
+> bunx jsr add @revenge-mod/devtools-client
+> ```
+
+While the server is running, you can connect to it from your React Native app.
 
 ```ts
 import { DevToolsClient } from "@revenge-mod/devtools-client"
