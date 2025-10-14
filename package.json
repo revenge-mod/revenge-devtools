@@ -5,11 +5,6 @@
 	"workspaces": [
 		"packages/*"
 	],
-	"dependencies": {
-		"@revenge-mod/devtools-client": "workspace:*",
-		"@revenge-mod/devtools-server": "workspace:*",
-		"@revenge-mod/devtools-shared": "workspace:*"
-	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.5",
 		"@types/bun": "latest"
