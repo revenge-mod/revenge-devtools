@@ -75,6 +75,7 @@ const { port: PORT, watchPath: WATCH_PATH } = parseArgs()
 
 interface ClientData {
 	id: string
+	info?: string
 	version: number
 	authenticated: boolean
 }
@@ -317,7 +318,9 @@ rl.on('line', line => {
 			else {
 				logger.log(`Connected clients (${clients.size}):`)
 				for (const [_ws, data] of clients.entries()) {
-					logger.log(`  ${data.id} - v${data.version}`)
+					logger.log(
+						`  ${data.id} - v${data.version}${data.info ? ` - ${data.info}` : ''}`,
+					)
 				}
 			}
 			break
