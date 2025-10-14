@@ -1,10 +1,10 @@
 {
-    "name": "@revenge-mod/devtools-client",
-    "version": "1.0.0",
-    "type": "module",
-    "license": "CC0-1.0",
-    "exports": "./src/index.ts",
-    "dependencies": {
-        "@revenge-mod/devtools-shared": "npm:@jsr/revenge-mod__devtools-shared"
-    }
+	"name": "@revenge-mod/devtools-client",
+	"version": "1.0.0",
+	"type": "module",
+	"license": "CC0-1.0",
+	"exports": "./src/index.ts",
+	"dependencies": {
+		"@revenge-mod/devtools-shared": "npm:@jsr/revenge-mod__devtools-shared"
+	}
 }

@@ -22,15 +22,55 @@ import type {
 
 type MessageHandler = (msg: Message) => void
 
+/**
+ * WebSocket client for connecting React Native apps to the Revenge Developer Tools server.
+ *
+ * Enables real-time debugging by:
+ * - Sending logs to the server console
+ * - Executing code remotely from the server
+ * - Exposing variables for inspection
+ *
+ * @example
+ * ```ts
+ * import { DevToolsClient } from "@revenge-mod/devtools-client"
+ * import { LogLevel } from '@revenge-mod/devtools-shared/constants'
+ *
+ * const client = new DevToolsClient()
+ * client.connect("ws://localhost:7864", "My App")
+ *
+ * // Expose variables
+ * client.expose('user', { name: 'John', age: 30 })
+ *
+ * // Send logs
+ * client.log(LogLevel.Default, ["Hello from client"])
+ * ```
+ */
 export class DevToolsClient {
+	/** Protocol version used by this client */
 	static version = PROTOCOL_VERSION
+
+	/** WebSocket connection instance */
 	ws: WebSocket | null = null
+
+	/** Current client settings received from server */
 	settings: ClientSettings = DEFAULT_SETTINGS.client
+
 	private scope: Record<string, any> = { devTools: this, vars: {} }
 	private connected: boolean = false
 	private authenticated: boolean = false
 	private handlers = new Map<number, Set<MessageHandler>>()
 
+	/**
+	 * Connect to the developer tools server.
+	 *
+	 * @param url - WebSocket server URL (e.g., "ws://localhost:7864")
+	 * @param info - Optional information string to identify this client
+	 *
+	 * @example
+	 * ```ts
+	 * client.connect("ws://localhost:7864", "My React Native App")
+	 * ```
+	 */
 	connect(url: string, info?: string) {
 		const isOpen = this.ws?.readyState === WebSocket.OPEN
 		if (isOpen) return
@@ -65,6 +105,9 @@ export class DevToolsClient {
 		}
 	}
 
+	/**
+	 * Disconnect from the server and clean up the connection.
+	 */
 	disconnect() {
 		if (this.ws) {
 			this.ws.close()
@@ -75,10 +118,29 @@ export class DevToolsClient {
 		this.authenticated = false
 	}
 
+	/**
+	 * Clear all saved variables. Not the scope itself!
+	 */
 	clearVars() {
 		this.scope.vars = {}
 	}
 
+	/**
+	 * Expose a variable to the server execution scope.
+	 *
+	 * @param key - Variable name to use in server scope
+	 * @param value - Value to expose (will be serialized when accessed)
+	 *
+	 * @example
+	 * ```ts
+	 * client.expose('user', { name: 'John', age: 30 })
+	 * client.expose('config', appConfig)
+	 *
+	 * // From server:
+	 * // > user.name
+	 * // "John"
+	 * ```
+	 */
 	expose(key: string, value: any) {
 		this.scope[key] = value
 	}
@@ -201,6 +263,20 @@ export class DevToolsClient {
 		}
 	}
 
+	/**
+	 * Send a log message to the server.
+	 *
+	 * @param level - Log level (Debug, Default, Warn, Error)
+	 * @param message - Array of values to log
+	 *
+	 * @example
+	 * ```ts
+	 * import { LogLevel } from '@revenge-mod/devtools-shared/constants'
+	 *
+	 * client.log(LogLevel.Debug, ["Debug info", { data: 123 }])
+	 * client.log(LogLevel.Error, ["Error:", error])
+	 * ```
+	 */
 	log(level: LogLevelType, message: any[]) {
 		if (!this.authenticated) return
 		if (level < this.settings.log.level) return
@@ -213,6 +289,21 @@ export class DevToolsClient {
 		this.send(msg)
 	}
 
+	/**
+	 * Register a handler for a specific message type.
+	 *
+	 * @param type - Message type to listen for
+	 * @param handler - Callback function to handle the message
+	 *
+	 * @example
+	 * ```ts
+	 * import { MessageType } from '@revenge-mod/devtools-shared/constants'
+	 *
+	 * client.on(MessageType.Hi, (msg) => {
+	 *   console.log('Server acknowledged connection')
+	 * })
+	 * ```
+	 */
 	on(type: MsgType, handler: MessageHandler) {
 		if (!this.handlers.has(type)) {
 			this.handlers.set(type, new Set())
@@ -220,6 +311,12 @@ export class DevToolsClient {
 		this.handlers.get(type)!.add(handler)
 	}
 
+	/**
+	 * Unregister a message handler.
+	 *
+	 * @param type - Message type
+	 * @param handler - Handler function to remove
+	 */
 	off(type: MsgType, handler: MessageHandler) {
 		const handlers = this.handlers.get(type)
 		if (handlers) {
@@ -227,6 +324,11 @@ export class DevToolsClient {
 		}
 	}
 
+	/**
+	 * Check if the client is connected and authenticated with the server.
+	 *
+	 * @returns `true` if connected and authenticated, `false` otherwise
+	 */
 	isConnected() {
 		return this.connected && this.authenticated
 	}
