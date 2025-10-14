@@ -1,4 +1,9 @@
+import * as fs from 'node:fs'
+import * as http from 'node:http'
+import * as path from 'node:path'
 import * as readline from 'node:readline'
+import * as util from 'node:util'
+import watcher from '@parcel/watcher'
 import {
 	DEFAULT_SETTINGS,
 	LogLevel,
@@ -12,6 +17,7 @@ import {
 	setPrompt,
 } from '@revenge-mod/devtools-shared/logger'
 import { deserialize, serialize } from '@revenge-mod/devtools-shared/serializer'
+import { WebSocketServer } from 'ws'
 import type {
 	HelloMessage,
 	HiMessage,
@@ -20,9 +26,52 @@ import type {
 	RunMessage,
 	Settings,
 } from '@revenge-mod/devtools-shared/types'
-import type { ServerWebSocket } from 'bun'
+import type { WebSocket } from 'ws'
 
-const PORT = process.env.PORT ? Number(process.env.PORT) : 7864
+function parseArgs() {
+	const args = process.argv.slice(2)
+	let port = 7864
+	let watchPath: string | null = null
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i]
+		if (arg === '--port' || arg === '-p') {
+			const portValue = args[++i]
+			if (portValue) {
+				port = Number(portValue)
+				if (Number.isNaN(port)) {
+					logger.error('Invalid port number')
+					process.exit(1)
+				}
+			}
+		} else if (arg === '--watch' || arg === '-w') {
+			// Check if next arg exists and is not another flag
+			const nextArg = args[i + 1]
+			if (nextArg && !nextArg.startsWith('-')) {
+				watchPath = args[++i]!
+			} else {
+				// --watch specified without path, use current directory
+				watchPath = process.cwd()
+			}
+		} else if (arg === '--help' || arg === '-h') {
+			console.log('Usage: revenge-devtools [options]')
+			console.log('')
+			console.log('Options:')
+			console.log(
+				'  --port, -p <port>        Port to listen on (default: 7864)',
+			)
+			console.log(
+				'  --watch, -w [path]       Enable file watching (default: current directory if no path provided)',
+			)
+			console.log('  --help, -h               Show this help')
+			process.exit(0)
+		}
+	}
+
+	return { port, watchPath }
+}
+
+const { port: PORT, watchPath: WATCH_PATH } = parseArgs()
 
 interface ClientData {
 	id: string
@@ -30,90 +79,114 @@ interface ClientData {
 	authenticated: boolean
 }
 
-const clients = new Map<ServerWebSocket<ClientData>, ClientData>()
+const clients = new Map<WebSocket, ClientData>()
 const mappings = new Map<string, string>()
 const settings: Settings = { ...DEFAULT_SETTINGS }
 
-Bun.serve<ClientData>({
-	port: PORT,
-	fetch(req, server) {
-		const upgraded = server.upgrade(req, {
-			data: {
-				id: crypto.getRandomValues(new Uint8Array(4)).toHex(),
-				version: 0,
-				authenticated: false,
-			},
-		})
-
-		if (!upgraded)
-			return new Response('WebSocket upgrade failed', { status: 500 })
-
-		return
-	},
-
-	websocket: {
-		open(ws) {
-			logger.server(`Connection open: ${ws.remoteAddress}`)
-		},
-
-		message(ws, data) {
-			try {
-				const msg = deserialize<Message>(data.toString())
-
-				switch (msg.type) {
-					case MessageType.Hello:
-						handleHello(ws, msg as HelloMessage)
-						break
-
-					case MessageType.Log:
-						if (!ws.data.authenticated) {
-							ws.close(1008, 'Not authenticated')
-							return
-						}
-						handleLog(ws, msg as LogMessage)
-						break
-
-					default:
-						logger.warn(`Unknown message type: ${msg.type}`)
-				}
-			} catch (e) {
-				logger.error('Parse error:', e)
-			}
-		},
-
-		close(ws, code, reason) {
-			logger.server(`Client disconnected: ${ws.data.id} (${code}: ${reason})`)
-			clients.delete(ws)
-		},
-	},
+const server = http.createServer((_req, res) => {
+	res.writeHead(426, { 'Content-Type': 'text/plain' })
+	res.end('WebSocket connection required')
 })
 
-function handleHello(ws: ServerWebSocket<ClientData>, msg: HelloMessage) {
-	if (msg.data.version !== PROTOCOL_VERSION)
+const wss = new WebSocketServer({ server })
+
+wss.on('connection', (ws, req) => {
+	const clientData: ClientData = {
+		id: crypto.randomUUID().slice(0, 8),
+		version: 0,
+		authenticated: false,
+	}
+
+	clients.set(ws, clientData)
+
+	const remoteAddress = req.socket.remoteAddress || 'unknown'
+	logger.server(`Connection open: ${remoteAddress}`)
+
+	ws.on('message', data => {
+		try {
+			const msg = deserialize<Message>(data.toString())
+			const clientInfo = clients.get(ws)!
+
+			switch (msg.type) {
+				case MessageType.Hello:
+					handleHello(ws, msg as HelloMessage)
+					break
+
+				case MessageType.Log:
+					if (!clientInfo.authenticated) {
+						ws.close(1008, 'Not authenticated')
+						return
+					}
+					handleLog(ws, msg as LogMessage)
+					break
+
+				default:
+					logger.warn(`Unknown message type: ${msg.type}`)
+			}
+		} catch (e) {
+			logger.error('Parse error:', e)
+		}
+	})
+
+	ws.on('close', (code, reason) => {
+		const clientInfo = clients.get(ws)
+		if (clientInfo) {
+			logger.server(
+				`Client disconnected: ${clientInfo.id} (${code}: ${reason.toString()})`,
+			)
+		}
+		clients.delete(ws)
+	})
+
+	ws.on('error', error => {
+		logger.error('WebSocket error:', error)
+	})
+})
+
+const rl = readline.createInterface({
+	input: process.stdin,
+	output: process.stdout,
+	prompt: '> ',
+})
+
+server.listen(PORT, () => {
+	logger.success(`Server running on: ws://localhost:${PORT}`)
+	logger.log('Type .help for commands')
+	logger.log('Press CTRL+C to exit')
+	rl.prompt()
+})
+
+function handleHello(ws: WebSocket, msg: HelloMessage) {
+	const clientData = clients.get(ws)!
+
+	if (msg.data.version !== PROTOCOL_VERSION) {
 		logger.server(
-			`Client rejected (v${msg.data.version} != v${PROTOCOL_VERSION}): ${ws.data.id}`,
+			`Client rejected (v${msg.data.version} != v${PROTOCOL_VERSION}): ${clientData.id}`,
 		)
 
-	logger.server(`Client connected: ${ws.data.id} (v${msg.data.version})`)
+		return ws.close(4000, 'Protocol version mismatch')
+	}
 
-	ws.data.version = msg.data.version
-	ws.data.authenticated = true
-	clients.set(ws, ws.data)
+	logger.server(`Client connected: ${clientData.id} (v${msg.data.version})`)
+
+	clientData.version = msg.data.version
+	clientData.authenticated = true
 
 	const response: HiMessage = {
 		type: MessageType.Hi,
 		data: {
 			version: PROTOCOL_VERSION,
 			supported: true,
-			settings,
+			settings: settings.client,
 		},
 	}
 
 	ws.send(serialize(response))
 }
 
-function handleLog(ws: ServerWebSocket<ClientData>, msg: LogMessage) {
-	const clientLog = createClientLogger(ws.data.id)
+function handleLog(ws: WebSocket, msg: LogMessage) {
+	const clientData = clients.get(ws)!
+	const clientLog = createClientLogger(clientData.id)
 
 	switch (msg.data.level) {
 		case LogLevel.Debug:
@@ -135,8 +208,8 @@ function handleLog(ws: ServerWebSocket<ClientData>, msg: LogMessage) {
 
 export function broadcast(message: Message) {
 	const payload = serialize(message)
-	for (const ws of clients.keys()) {
-		if (ws.data.authenticated) {
+	for (const [ws, data] of clients.entries()) {
+		if (data.authenticated && ws.readyState === ws.OPEN) {
 			ws.send(payload)
 		}
 	}
@@ -145,7 +218,11 @@ export function broadcast(message: Message) {
 export function sendToClient(clientId: string, message: Message) {
 	const payload = serialize(message)
 	for (const [ws, data] of clients.entries()) {
-		if (data.id === clientId && data.authenticated) {
+		if (
+			data.id === clientId &&
+			data.authenticated &&
+			ws.readyState === ws.OPEN
+		) {
 			ws.send(payload)
 			return true
 		}
@@ -153,15 +230,52 @@ export function sendToClient(clientId: string, message: Message) {
 	return false
 }
 
-logger.success(`Server running on: ws://localhost:${PORT}`)
-logger.log('Type .help for commands')
-logger.log('Press CTRL+C to exit')
+if (WATCH_PATH) {
+	const absoluteWatchPath = path.isAbsolute(WATCH_PATH)
+		? WATCH_PATH
+		: path.resolve(process.cwd(), WATCH_PATH)
 
-const rl = readline.createInterface({
-	input: process.stdin,
-	output: process.stdout,
-	prompt: '> ',
-})
+	if (!fs.existsSync(absoluteWatchPath)) {
+		logger.error(`Watch path does not exist: ${absoluteWatchPath}`)
+	} else {
+		logger.log(`Watching for file changes: ${absoluteWatchPath}`)
+
+		watcher
+			.subscribe(absoluteWatchPath, (err, events) => {
+				if (err) {
+					logger.error('Watcher error:', err)
+					return
+				}
+
+				if (!events.length) return
+
+				clearPromptLine()
+
+				if (settings.server.watch.command) {
+					const runMsg: RunMessage = {
+						type: MessageType.Run,
+						data: {
+							code: settings.server.watch.command,
+							mappings: Object.fromEntries(mappings),
+						},
+					}
+					broadcast(runMsg)
+					logger.server('Broadcasted watch command to clients')
+				}
+
+				rl.prompt()
+			})
+			.then(subscription => {
+				process.on('SIGINT', async () => {
+					await subscription.unsubscribe()
+					process.exit(0)
+				})
+			})
+			.catch(err => {
+				logger.error('Failed to start file watcher:', err)
+			})
+	}
+}
 
 rl.on('line', line => {
 	const trimmed = line.trim()
@@ -248,9 +362,13 @@ rl.on('line', line => {
 		case '.setting': {
 			if (args.length === 0) {
 				logger.log('Current settings:')
-				for (const [key, value] of Object.entries(settings)) {
-					logger.log(`  ${key}: ${Bun.inspect(value, { colors: true })}`)
-				}
+
+				logger.log('  client:')
+				printNestedSettings(settings.client, '    ')
+
+				logger.log('  server:')
+				printNestedSettings(settings.server, '    ')
+
 				break
 			}
 
@@ -262,7 +380,7 @@ rl.on('line', line => {
 				const current = getNestedValue(settings, path)
 				const defaultVal = getNestedValue(DEFAULT_SETTINGS, path)
 				logger.log(
-					`${path}: ${Bun.inspect(current, { colors: true })} (default: ${Bun.inspect(defaultVal, { colors: true })})`,
+					`${path}: ${util.inspect(current, { colors: true })} (default: ${util.inspect(defaultVal, { colors: true })})`,
 				)
 				break
 			}
@@ -275,7 +393,7 @@ rl.on('line', line => {
 			const msg: HiMessage = {
 				type: MessageType.Hi,
 				data: {
-					settings,
+					settings: settings.client,
 					version: PROTOCOL_VERSION,
 					// safe to assume all clients connected are supported
 					supported: true,
@@ -322,6 +440,17 @@ function setNestedValue(obj: any, path: string, value: any): void {
 	target[lastKey] = value
 }
 
+function printNestedSettings(obj: any, indent: string): void {
+	for (const [key, value] of Object.entries(obj)) {
+		if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+			logger.log(`${indent}${key}:`)
+			printNestedSettings(value, `${indent}  `)
+		} else {
+			logger.log(`${indent}${key}: ${util.inspect(value, { colors: true })}`)
+		}
+	}
+}
+
 rl.on('close', () => {
 	process.exit(0)
 })
@@ -331,5 +460,3 @@ setInterval(() => {
 	const line = (rl as any).line || ''
 	setPrompt('> ', line)
 }, 100)
-
-rl.prompt()

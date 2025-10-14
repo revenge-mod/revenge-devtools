@@ -10,6 +10,7 @@ import {
 	serialize,
 } from '@revenge-mod/devtools-shared/serializer'
 import type {
+	ClientSettings,
 	HelloMessage,
 	HiMessage,
 	LogLevel as LogLevelType,
@@ -17,7 +18,6 @@ import type {
 	Message,
 	MessageType as MsgType,
 	RunMessage,
-	Settings,
 } from '@revenge-mod/devtools-shared/types'
 
 type MessageHandler = (msg: Message) => void
@@ -25,7 +25,7 @@ type MessageHandler = (msg: Message) => void
 export class DevToolsClient {
 	static version = PROTOCOL_VERSION
 	ws: WebSocket | null = null
-	settings: Settings = DEFAULT_SETTINGS
+	settings: ClientSettings = DEFAULT_SETTINGS.client
 	vars: Record<string, any> = {}
 	private scope: Record<string, any> = { devTools: this, vars: this.vars }
 	private connected: boolean = false
@@ -142,7 +142,7 @@ export class DevToolsClient {
 			const result = func(...Object.values(scope))
 
 			this.log(LogLevel.Default, [
-				createDepthLimitedProxy(result, this.settings.inspectDepth),
+				createDepthLimitedProxy(result, this.settings.log.inspectDepth),
 			])
 		} catch (e: any) {
 			this.log(LogLevel.Error, [e.stack ?? e.message ?? String(e)])
@@ -198,7 +198,7 @@ export class DevToolsClient {
 
 	log(level: LogLevelType, message: any[]) {
 		if (!this.authenticated) return
-		if (level < this.settings.logLevel) return
+		if (level < this.settings.log.level) return
 
 		const msg: LogMessage = {
 			type: MessageType.Log,

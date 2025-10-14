@@ -5,10 +5,23 @@ export type MessageType<
 	K extends keyof typeof MessageType = keyof typeof MessageType,
 > = (typeof MessageType)[K]
 
+export interface ClientSettings {
+	log: {
+		level: LogLevel
+		interceptConsole: boolean
+		inspectDepth: number
+	}
+}
+
+export interface ServerSettings {
+	watch: {
+		command: string | false
+	}
+}
+
 export interface Settings {
-	logLevel: LogLevel
-	inspectDepth: number
-	interceptConsole: boolean
+	client: ClientSettings
+	server: ServerSettings
 }
 
 export interface LogMessageData {
@@ -50,6 +63,6 @@ export interface HiMessage extends Message {
 	data: {
 		version: number
 		supported: boolean
-		settings: Settings
+		settings: ClientSettings
 	}
 }

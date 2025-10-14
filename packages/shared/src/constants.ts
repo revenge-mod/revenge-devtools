@@ -29,11 +29,20 @@ export const MessageType = {
 } as const
 
 export const DEFAULT_SETTINGS: Settings = {
-	logLevel: LogLevel.Default,
-	inspectDepth: 2,
-	interceptConsole: true,
+	client: {
+		log: {
+			level: LogLevel.Default,
+			inspectDepth: 2,
+			interceptConsole: true,
+		},
+	},
+	server: {
+		watch: {
+			command: false,
+		},
+	},
 }
 
-export const PROTOCOL_VERSION = 1
+export const PROTOCOL_VERSION = 2
 
 export const MAX_DEPTH_MESSAGE = '[MAX DEPTH REACHED]'

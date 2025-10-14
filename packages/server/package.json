@@ -1,12 +1,21 @@
 {
     "name": "@revenge-mod/devtools-server",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "type": "module",
     "exports": "./src/index.ts",
+    "bin": {
+        "revenge-devtools": "./bin/revenge-devtools.js"
+    },
     "scripts": {
         "start": "bun run src/index.ts"
     },
     "dependencies": {
-        "@revenge-mod/devtools-shared": "workspace:*"
+        "@parcel/watcher": "^2.5.1",
+        "@revenge-mod/devtools-shared": "npm:@jsr/revenge-mod__devtools-shared",
+        "ws": "^8.18.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "@types/ws": "^8.5.13"
     }
 }
