@@ -1,6 +1,6 @@
 {
 	"name": "@revenge-mod/devtools-server",
-	"version": "1.0.2",
+	"version": "1.1.0",
 	"type": "module",
 	"license": "CC0-1.0",
 	"exports": "./src/index.ts",
@@ -9,7 +9,8 @@
 	},
 	"files": [
 		"dist",
-		"bin"
+		"bin",
+		"README.md"
 	],
 	"scripts": {
 		"start": "bun run src/index.ts",
