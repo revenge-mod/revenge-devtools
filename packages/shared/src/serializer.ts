@@ -1,5 +1,6 @@
 /** biome-ignore-all lint/complexity/noBannedTypes: don't care */
 
+import chalk from 'chalk'
 import SuperJSON from 'superjson'
 
 const superjson = new SuperJSON()
@@ -49,11 +50,7 @@ superjson.registerCustom<object, string>(
 			// Create a simple object with the toString representation
 			return {
 				[Symbol.for('nodejs.util.inspect.custom')]() {
-					if (typeof process !== 'undefined' && process?.versions?.node) {
-						const util = require('node:util')
-						return util.styleText('cyan', tagString)
-					}
-					return tagString
+					return chalk.cyan(tagString)
 				},
 				toString() {
 					return tagString
@@ -66,16 +63,8 @@ superjson.registerCustom<object, string>(
 
 class MaxDepthObject {
 	// Custom inspect for Node.js environments
-	get [Symbol.for('nodejs.util.inspect.custom')]() {
-		// Only define this in Node.js environments
-		if (typeof process !== 'undefined' && process?.versions?.node) {
-			return () => {
-				// Dynamic import to avoid bundling issues
-				const util = require('node:util')
-				return util.styleText('cyan', '[Object]')
-			}
-		}
-		return undefined
+	[Symbol.for('nodejs.util.inspect.custom')]() {
+		return chalk.cyan('[Object]')
 	}
 
 	// Fallback toString for browsers/non-Node environments
@@ -88,14 +77,8 @@ class MaxDepthFunction {
 	constructor(public name: string = 'anonymous') {}
 
 	// Custom inspect for Node.js environments
-	get [Symbol.for('nodejs.util.inspect.custom')]() {
-		if (typeof process !== 'undefined' && process?.versions?.node) {
-			return () => {
-				const util = require('node:util')
-				return util.styleText('cyan', `[Function: ${this.name}]`)
-			}
-		}
-		return undefined
+	[Symbol.for('nodejs.util.inspect.custom')]() {
+		return chalk.cyan(`[Function: ${this.name}]`)
 	}
 
 	// Fallback toString for browsers/non-Node environments
@@ -108,14 +91,8 @@ class MaxDepthGetter {
 	constructor(public name: string) {}
 
 	// Custom inspect for Node.js environments
-	get [Symbol.for('nodejs.util.inspect.custom')]() {
-		if (typeof process !== 'undefined' && process?.versions?.node) {
-			return () => {
-				const util = require('node:util')
-				return util.styleText('cyan', `[Getter]`)
-			}
-		}
-		return undefined
+	[Symbol.for('nodejs.util.inspect.custom')]() {
+		return chalk.cyan(`[Getter]`)
 	}
 
 	// Fallback toString for browsers/non-Node environments
@@ -128,14 +105,8 @@ class MaxDepthSetter {
 	constructor(public name: string) {}
 
 	// Custom inspect for Node.js environments
-	get [Symbol.for('nodejs.util.inspect.custom')]() {
-		if (typeof process !== 'undefined' && process?.versions?.node) {
-			return () => {
-				const util = require('node:util')
-				return util.styleText('cyan', `[Setter]`)
-			}
-		}
-		return undefined
+	[Symbol.for('nodejs.util.inspect.custom')]() {
+		return chalk.cyan(`[Setter]`)
 	}
 
 	// Fallback toString for browsers/non-Node environments
@@ -148,14 +119,8 @@ class MaxDepthGetterSetter {
 	constructor(public name: string) {}
 
 	// Custom inspect for Node.js environments
-	get [Symbol.for('nodejs.util.inspect.custom')]() {
-		if (typeof process !== 'undefined' && process?.versions?.node) {
-			return () => {
-				const util = require('node:util')
-				return util.styleText('cyan', `[Getter/Setter]`)
-			}
-		}
-		return undefined
+	[Symbol.for('nodejs.util.inspect.custom')]() {
+		return chalk.cyan(`[Getter/Setter]`)
 	}
 
 	// Fallback toString for browsers/non-Node environments
