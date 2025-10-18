@@ -3,14 +3,38 @@
 	"version": "1.0.0",
 	"type": "module",
 	"license": "CC0-1.0",
+	"scripts": {
+		"build": "bunx tsdown --dts --treeshake --target esnext --tsconfig ../../tsconfig.json src/constants.ts src/logger.ts src/serializer.ts src/types.ts"
+	},
+	"files": [
+		"README.md",
+		"dist"
+	],
 	"exports": {
-		"./types": "./src/types.ts",
-		"./constants": "./src/constants.ts",
-		"./logger": "./src/logger.ts",
-		"./serializer": "./src/serializer.ts"
+		"./types": {
+			"types": "./dist/types.d.ts"
+		},
+		"./constants": {
+			"default": "./dist/constants.js",
+			"types": "./dist/constants.d.ts"
+		},
+		"./logger": {
+			"default": "./dist/logger.js",
+			"types": "./dist/logger.d.ts"
+		},
+		"./serializer": {
+			"default": "./dist/serializer.js",
+			"types": "./dist/serializer.d.ts"
+		}
 	},
 	"dependencies": {
 		"chalk": "^5.6.2",
 		"superjson": "^2.2.2"
+	},
+	"publishConfig": {
+		"access": "public"
+	},
+	"devDependencies": {
+		"tsdown": "^0.15.7"
 	}
 }

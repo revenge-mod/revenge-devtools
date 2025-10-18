@@ -8,10 +8,8 @@ The client package provides a WebSocket-based connection to the developer tools 
 
 ## ⬇️ Install
 
-The client package is only published on [JSR](https://jsr.io). To install it, run the following command:
-
 ```sh
-bunx jsr add @revenge-mod/devtools-client
+bun i @revenge-mod/devtools-client
 ```
 
 ## 🚀 Usage

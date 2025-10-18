@@ -18,7 +18,7 @@
 	},
 	"dependencies": {
 		"@parcel/watcher": "^2.5.1",
-		"@revenge-mod/devtools-shared": "npm:@jsr/revenge-mod__devtools-shared",
+		"@revenge-mod/devtools-shared": "1.0.0",
 		"ws": "^8.18.0"
 	},
 	"devDependencies": {
