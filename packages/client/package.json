@@ -4,7 +4,7 @@
 	"type": "module",
 	"license": "CC0-1.0",
 	"scripts": {
-		"build": "bunx tsdown --dts --treeshake --target esnext --tsconfig ../../tsconfig.json"
+		"build": "bunx tsdown --dts --treeshake --target esnext --platform neutral --tsconfig ../../tsconfig.json"
 	},
 	"exports": {
 		".": {

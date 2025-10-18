@@ -1,10 +1,10 @@
 {
 	"name": "@revenge-mod/devtools-shared",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"type": "module",
 	"license": "CC0-1.0",
 	"scripts": {
-		"build": "bunx tsdown --dts --treeshake --target esnext --tsconfig ../../tsconfig.json src/constants.ts src/logger.ts src/serializer.ts src/types.ts"
+		"build": "bunx tsdown --dts --treeshake --target esnext --platform neutral --tsconfig ../../tsconfig.json src/constants.ts src/logger.ts src/serializer.ts src/types.ts"
 	},
 	"files": [
 		"README.md",
