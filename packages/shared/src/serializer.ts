@@ -250,7 +250,7 @@ export function createDepthLimitedProxy<T extends object>(
  * @param value - Value to serialize
  * @returns JSON string representation
  */
-export const serialize = superjson.stringify
+export const serialize = superjson.stringify.bind(superjson)
 
 /**
  * Deserialize a JSON string back to its original value using superjson.
@@ -258,4 +258,4 @@ export const serialize = superjson.stringify
  * @param json - JSON string to deserialize
  * @returns Deserialized value
  */
-export const deserialize = superjson.parse
+export const deserialize = superjson.parse.bind(superjson)
