@@ -1,6 +1,6 @@
 {
 	"name": "@revenge-mod/devtools-client",
-	"version": "1.2.0",
+	"version": "1.2.1",
 	"type": "module",
 	"license": "CC0-1.0",
 	"scripts": {
@@ -17,7 +17,7 @@
 		"README.md"
 	],
 	"dependencies": {
-		"@revenge-mod/devtools-shared": "^1.0.2"
+		"@revenge-mod/devtools-shared": "^1.1.0"
 	},
 	"publishConfig": {
 		"access": "public"
