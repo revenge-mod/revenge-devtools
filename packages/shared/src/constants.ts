@@ -33,6 +33,31 @@ export const MessageType = {
 	 * "Client, run this for me."
 	 */
 	Run: 4,
+	/**
+	 * "Client, run this MCP command for me and send me the result."
+	 */
+	MCPRun: 5,
+	/**
+	 * "Server, here is the result of the MCP command you asked me to run."
+	 */
+	MCPResult: 6,
+} as const
+
+/**
+ * MCP command names (and tool names) supported by the client runtime.
+ */
+export const MCPCommand = {
+	GetModules: 'revenge_get_modules',
+	LookupModules: 'revenge_lookup_modules',
+	RequireModule: 'revenge_require_module',
+	SaveVar: 'revenge_save_var',
+	PatchMethod: 'revenge_patch_method',
+	UnpatchMethod: 'revenge_unpatch_method',
+	Eval: 'revenge_eval',
+	DiscordReload: 'revenge_discord_reload',
+	DiscordFluxListen: 'revenge_discord_flux_listen',
+	DiscordFluxPatch: 'revenge_discord_flux_patch',
+	DiscordFluxUnpatch: 'revenge_discord_flux_unpatch',
 } as const
 
 /**
@@ -50,6 +75,9 @@ export const DEFAULT_SETTINGS: Settings = {
 		watch: {
 			command: false,
 		},
+		mcp: {
+			commandTimeout: 30000,
+		},
 	},
 }
 
@@ -57,4 +85,4 @@ export const DEFAULT_SETTINGS: Settings = {
  * Current protocol version for client-server compatibility.
  * Clients and servers with different versions may be incompatible.
  */
-export const PROTOCOL_VERSION = 2
+export const PROTOCOL_VERSION = 3

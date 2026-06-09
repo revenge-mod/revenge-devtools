@@ -3,7 +3,6 @@ import * as http from 'node:http'
 import * as path from 'node:path'
 import * as readline from 'node:readline'
 import * as util from 'node:util'
-import watcher from '@parcel/watcher'
 import {
 	DEFAULT_SETTINGS,
 	LogLevel,
@@ -18,20 +17,26 @@ import {
 } from '@revenge-mod/devtools-shared/logger'
 import { deserialize, serialize } from '@revenge-mod/devtools-shared/serializer'
 import { WebSocketServer } from 'ws'
+import { handleMcpHttpRequest } from './mcp'
 import type {
 	HelloMessage,
 	HiMessage,
 	LogMessage,
+	MCPResultMessage,
 	Message,
 	RunMessage,
 	Settings,
 } from '@revenge-mod/devtools-shared/types'
 import type { WebSocket } from 'ws'
+import type { ListClientsFn, RunMcpCommandFn } from './mcp'
 
 function parseArgs() {
 	const args = process.argv.slice(2)
 	let port = 7864
 	let watchPath: string | null = null
+	let mcp = false
+	let mcpPort: number | null = null
+	let mcpPath = '/mcp'
 
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i]
@@ -53,6 +58,22 @@ function parseArgs() {
 				// --watch specified without path, use current directory
 				watchPath = process.cwd()
 			}
+		} else if (arg === '--mcp') {
+			mcp = true
+		} else if (arg === '--mcp-port') {
+			mcp = true
+			const portValue = args[++i]
+			if (portValue) {
+				mcpPort = Number(portValue)
+				if (Number.isNaN(mcpPort)) {
+					logger.error('Invalid MCP port number')
+					process.exit(1)
+				}
+			}
+		} else if (arg === '--mcp-path') {
+			const pathValue = args[++i]
+			if (pathValue)
+				mcpPath = pathValue.startsWith('/') ? pathValue : `/${pathValue}`
 		} else if (arg === '--help' || arg === '-h') {
 			console.log('Usage: revenge-devtools [options]')
 			console.log('')
@@ -63,15 +84,30 @@ function parseArgs() {
 			console.log(
 				'  --watch, -w [path]       Enable file watching (default: current directory if no path provided)',
 			)
+			console.log(
+				'  --mcp                    Enable the MCP server on the main port at the MCP path',
+			)
+			console.log(
+				'  --mcp-port <port>        Enable the MCP server on a separate port',
+			)
+			console.log(
+				'  --mcp-path <path>        Path for the MCP endpoint (default: /mcp)',
+			)
 			console.log('  --help, -h               Show this help')
 			process.exit(0)
 		}
 	}
 
-	return { port, watchPath }
+	return { port, watchPath, mcp, mcpPort, mcpPath }
 }
 
-const { port: PORT, watchPath: WATCH_PATH } = parseArgs()
+const {
+	port: PORT,
+	watchPath: WATCH_PATH,
+	mcp: MCP_ENABLED,
+	mcpPort: MCP_PORT,
+	mcpPath: MCP_PATH,
+} = parseArgs()
 
 interface ClientData {
 	id: string
@@ -84,10 +120,170 @@ const clients = new Map<WebSocket, ClientData>()
 const mappings = new Map<string, string>()
 const settings: Settings = { ...DEFAULT_SETTINGS }
 
-const server = http.createServer((_req, res) => {
+//#region MCP
+
+interface PendingMcp {
+	clientId: string
+	resolve: (value: unknown) => void
+	reject: (error: Error) => void
+	timer: ReturnType<typeof setTimeout>
+}
+
+const pendingMcp = new Map<string, PendingMcp>()
+
+/**
+ * Resolve the target client for an MCP command.
+ *
+ * @param clientId - Optional explicit client ID.
+ * @returns The matching authenticated client's WebSocket and ID.
+ * @throws If no client matches, or if ambiguous when no ID is given.
+ */
+function resolveTargetClient(clientId?: string): {
+	ws: WebSocket
+	data: ClientData
+} {
+	const authed = [...clients.entries()].filter(
+		([ws, data]) => data.authenticated && ws.readyState === ws.OPEN,
+	)
+
+	if (clientId) {
+		const match = authed.find(([, data]) => data.id === clientId)
+		if (!match) throw new Error(`No connected client with ID "${clientId}"`)
+		return { ws: match[0], data: match[1] }
+	}
+
+	if (authed.length === 0) throw new Error('No clients connected')
+	if (authed.length > 1)
+		throw new Error(
+			`Multiple clients connected; specify a clientId. Connected: ${authed
+				.map(([, d]) => d.id)
+				.join(', ')}`,
+		)
+
+	return { ws: authed[0]![0], data: authed[0]![1] }
+}
+
+/**
+ * Send an MCP command to a client and await its result.
+ */
+const runMcpCommand: RunMcpCommandFn = (command, args, clientId) => {
+	const { ws, data } = resolveTargetClient(clientId)
+	const id = crypto.randomUUID()
+
+	const message: Message = {
+		type: MessageType.MCPRun,
+		data: { id, command, args },
+	}
+
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			pendingMcp.delete(id)
+			reject(new Error(`MCP command "${command}" timed out`))
+		}, settings.server.mcp.commandTimeout)
+
+		pendingMcp.set(id, { clientId: data.id, resolve, reject, timer })
+		logger.server(`MCP → ${data.id}: ${command}`)
+		ws.send(serialize(message))
+	})
+}
+
+function handleMcpResult(msg: MCPResultMessage) {
+	const pending = pendingMcp.get(msg.data.id)
+	if (!pending) return
+
+	clearTimeout(pending.timer)
+	pendingMcp.delete(msg.data.id)
+
+	if (msg.data.ok) pending.resolve(msg.data.result)
+	else pending.reject(new Error(msg.data.error ?? 'MCP command failed'))
+}
+
+function rejectPendingForClient(clientId: string, reason: string) {
+	for (const [id, pending] of pendingMcp.entries()) {
+		if (pending.clientId !== clientId) continue
+		clearTimeout(pending.timer)
+		pendingMcp.delete(id)
+		pending.reject(new Error(reason))
+	}
+}
+
+/**
+ * List currently connected clients (read directly from server state).
+ */
+const listClients: ListClientsFn = () =>
+	[...clients.values()].map(data => ({
+		id: data.id,
+		info: data.info,
+		version: data.version,
+		authenticated: data.authenticated,
+	}))
+
+/**
+ * Read the request body and forward it to the stateless MCP HTTP handler.
+ */
+function routeMcpRequest(req: http.IncomingMessage, res: http.ServerResponse) {
+	const chunks: Buffer[] = []
+	req.on('data', chunk => chunks.push(chunk as Buffer))
+	req.on('end', async () => {
+		let body: unknown
+		const raw = Buffer.concat(chunks).toString('utf8')
+		if (raw) {
+			try {
+				body = JSON.parse(raw)
+			} catch {
+				res.writeHead(400, { 'Content-Type': 'application/json' })
+				res.end(
+					JSON.stringify({
+						jsonrpc: '2.0',
+						error: { code: -32700, message: 'Parse error' },
+						id: null,
+					}),
+				)
+				return
+			}
+		}
+
+		try {
+			await handleMcpHttpRequest(req, res, body, runMcpCommand, listClients)
+		} catch (e) {
+			logger.error('MCP request error:', e)
+			if (!res.headersSent) {
+				res.writeHead(500, { 'Content-Type': 'application/json' })
+				res.end(
+					JSON.stringify({
+						jsonrpc: '2.0',
+						error: { code: -32603, message: 'Internal server error' },
+						id: null,
+					}),
+				)
+			}
+		}
+	})
+}
+
+//#endregion MCP
+
+/**
+ * Node HTTP request handler. Routes the MCP endpoint (when enabled on the main
+ * port) and otherwise returns the WebSocket-upgrade-required response.
+ */
+function httpRequestHandler(
+	req: http.IncomingMessage,
+	res: http.ServerResponse,
+) {
+	const url = req.url ?? '/'
+	const pathOnly = url.split('?')[0]
+
+	if (MCP_ENABLED && MCP_PORT === null && pathOnly === MCP_PATH) {
+		routeMcpRequest(req, res)
+		return
+	}
+
 	res.writeHead(426, { 'Content-Type': 'text/plain' })
 	res.end('WebSocket connection required')
-})
+}
+
+const server = http.createServer(httpRequestHandler)
 
 const wss = new WebSocketServer({ server })
 
@@ -121,6 +317,14 @@ wss.on('connection', (ws, req) => {
 					handleLog(ws, msg as LogMessage)
 					break
 
+				case MessageType.MCPResult:
+					if (!clientInfo.authenticated) {
+						ws.close(1008, 'Not authenticated')
+						return
+					}
+					handleMcpResult(msg as MCPResultMessage)
+					break
+
 				default:
 					logger.warn(`Unknown message type: ${msg.type}`)
 			}
@@ -135,6 +339,7 @@ wss.on('connection', (ws, req) => {
 			logger.server(
 				`Client disconnected: ${clientInfo.id} (${code}: ${reason.toString()})`,
 			)
+			rejectPendingForClient(clientInfo.id, 'Client disconnected')
 		}
 		clients.delete(ws)
 	})
@@ -152,6 +357,22 @@ const rl = readline.createInterface({
 
 server.listen(PORT, () => {
 	logger.success(`Server running on: ws://localhost:${PORT}`)
+
+	if (MCP_ENABLED) {
+		if (MCP_PORT !== null) {
+			const mcpServer = http.createServer(routeMcpRequest)
+			mcpServer.listen(MCP_PORT, () => {
+				logger.success(
+					`MCP server running on: http://localhost:${MCP_PORT}${MCP_PATH}`,
+				)
+			})
+		} else {
+			logger.success(
+				`MCP server running on: http://localhost:${PORT}${MCP_PATH}`,
+			)
+		}
+	}
+
 	logger.log('Type .help for commands')
 	logger.log('Press CTRL+C to exit')
 	rl.prompt()
@@ -253,40 +474,43 @@ if (WATCH_PATH) {
 	} else {
 		logger.log(`Watching for file changes: ${absoluteWatchPath}`)
 
-		watcher
-			.subscribe(absoluteWatchPath, (err, events) => {
-				if (err) {
-					logger.error('Watcher error:', err)
-					return
-				}
-
-				if (!events.length) return
-
-				clearPromptLine()
-
-				if (settings.server.watch.command) {
-					const runMsg: RunMessage = {
-						type: MessageType.Run,
-						data: {
-							code: settings.server.watch.command,
-							mappings: Object.fromEntries(mappings),
-						},
+		// So the native watcher is only required when watching enabled
+		import('@parcel/watcher').then(({ default: watcher }) => {
+			watcher
+				.subscribe(absoluteWatchPath, (err, events) => {
+					if (err) {
+						logger.error('Watcher error:', err)
+						return
 					}
-					broadcast(runMsg)
-					logger.server('Broadcasted watch command to clients')
-				}
 
-				rl.prompt()
-			})
-			.then(subscription => {
-				process.on('SIGINT', async () => {
-					await subscription.unsubscribe()
-					process.exit(0)
+					if (!events.length) return
+
+					clearPromptLine()
+
+					if (settings.server.watch.command) {
+						const runMsg: RunMessage = {
+							type: MessageType.Run,
+							data: {
+								code: settings.server.watch.command,
+								mappings: Object.fromEntries(mappings),
+							},
+						}
+						broadcast(runMsg)
+						logger.server('Broadcasted watch command to clients')
+					}
+
+					rl.prompt()
 				})
-			})
-			.catch(err => {
-				logger.error('Failed to start file watcher:', err)
-			})
+				.then(subscription => {
+					process.on('SIGINT', async () => {
+						await subscription.unsubscribe()
+						process.exit(0)
+					})
+				})
+				.catch(err => {
+					logger.error('Failed to start file watcher:', err)
+				})
+		})
 	}
 }
 

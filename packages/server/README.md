@@ -44,6 +44,9 @@ revenge-devtools [options]
 
 - `--port, -p <port>` - Port to listen on (default: 7864)
 - `--watch, -w [path]` - Enable file watching (default: current directory if no path provided)
+- `--mcp` - Enable the MCP server on the main port at the MCP path (default path: `/mcp`)
+- `--mcp-port <port>` - Enable the MCP server on a separate port
+- `--mcp-path <path>` - Path for the MCP endpoint (default: `/mcp`)
 - `--help, -h` - Show help information
 
 #### Examples
@@ -60,7 +63,52 @@ revenge-devtools --watch
 
 # Combine options
 revenge-devtools --port 8080 --watch ./src
+
+# Enable the MCP server (Streamable HTTP) at http://localhost:7864/mcp
+revenge-devtools --mcp
+
+# Run the MCP server on a separate port
+revenge-devtools --mcp-port 7865
 ```
+
+## 🤖 MCP server
+
+When started with `--mcp`, the server exposes a [Model Context Protocol](https://modelcontextprotocol.io) endpoint over Streamable HTTP so an LLM/agent can drive a connected client. Each tool call is forwarded to the target client over the existing WebSocket connection and the result is returned to the caller.
+
+Point your MCP client at `http://localhost:<port><mcp-path>` (default `http://localhost:7864/mcp`).
+
+### 🛠️ Tools
+
+#### Modules
+
+- `revenge_get_modules` - Find Metro/Revenge modules by a named filter (e.g. `withProps`) and a stringified array of arguments (evaluated in the client scope, so dynamic values are passable). Returns matching module IDs and a depth-limited shape of their exports. Supports `max` and `timeout` to wait for matches.
+- `revenge_lookup_modules` - Synchronously look up all modules matching a filter. Set `initialize: false` to return matching IDs with `null` exports **without** initializing the modules (no side effects).
+- `revenge_require_module` - Require (initialize if needed) a Metro module by its ID and return a depth-limited shape of its exports.
+
+#### Scope & patching
+
+- `revenge_save_var` - Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls.
+- `revenge_patch_method` - Patch a method (`before` / `instead` / `after`) on a target object using the Revenge patcher. Returns a patch ID.
+- `revenge_unpatch_method` - Remove a patch by its ID.
+- `revenge_eval` - Evaluate arbitrary code in the client scope and return the depth-limited result.
+
+#### Discord
+
+- `revenge_discord_reload` - Reload the Discord app via `BundleUpdaterManager` (the client connection will drop).
+- `revenge_discord_flux_listen` - Observe dispatched Flux events without blocking them, resolving once `count` events are captured or `timeout` elapses. Omit `event` to capture all events.
+- `revenge_discord_flux_patch` - Patch a Flux event with a hook; returning a falsy value blocks the event. Returns a patch ID (shares the same ID store as `revenge_patch_method`/`revenge_unpatch_method`).
+- `revenge_discord_flux_unpatch` - Remove a Flux patch by its ID.
+
+#### Server
+
+- `revenge_devtools_clients` - List the clients currently connected to the server. Reads server state directly, so it works even with no client connected.
+
+Most tools accept an optional `clientId` to target a specific client when more than one is connected (`revenge_devtools_clients` does not, as it is server-local).
+
+The MCP request timeout (how long the server waits for a client to respond) is configurable at runtime via the `server.mcp.commandTimeout` setting (milliseconds, default `30000`): `.setting server.mcp.commandTimeout 60000`. Long-running `revenge_discord_flux_listen` / `revenge_get_modules` waits should stay below this value.
+
+> [!WARNING]
+> MCP tools evaluate arbitrary code in the connected client (same trust model as the REPL). It is opt-in via `--mcp` and intended for trusted local connections only.
 
 ## ⌨️ REPL
 
@@ -206,8 +254,10 @@ The server uses a simple WebSocket protocol with message types:
 - `Hi` (2) - Server responds with version compatibility and settings
 - `Log` (3) - Client sends log messages
 - `Run` (4) - Server sends code to execute
+- `MCPRun` (5) - Server asks the client to run an MCP command
+- `MCPResult` (6) - Client returns the result of an MCP command
 
-The protocol version is currently `2`. Clients with incompatible versions are rejected.
+The protocol version is currently `3`. Clients with incompatible versions are rejected.
 
 ## 📝 Advanced usage
 
