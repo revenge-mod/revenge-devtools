@@ -35,7 +35,7 @@ The shared package contains common utilities, types, and constants used by both 
 
 [Read more →](./packages/shared/README.md)
 
-## �📜 License
+## 📜 License
 
 This project was made by mostly using AI tools, so it is licensed under CC0 1.0.  
 See [LICENSE](./LICENSE) for more details.
