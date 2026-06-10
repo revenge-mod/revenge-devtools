@@ -1,6 +1,6 @@
 {
 	"name": "@revenge-mod/devtools-server",
-	"version": "1.3.0",
+	"version": "1.4.0",
 	"type": "module",
 	"license": "CC0-1.0",
 	"exports": "./src/index.ts",
@@ -19,7 +19,7 @@
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.12.0",
 		"@parcel/watcher": "^2.5.1",
-		"@revenge-mod/devtools-shared": "^1.2.0",
+		"@revenge-mod/devtools-shared": "^1.3.0",
 		"ws": "^8.18.0",
 		"zod": "^3.23.8"
 	},
