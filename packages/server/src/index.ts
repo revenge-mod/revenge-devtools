@@ -6,6 +6,7 @@ import * as util from 'node:util'
 import {
 	DEFAULT_SETTINGS,
 	LogLevel,
+	MCPCommand,
 	MessageType,
 	PROTOCOL_VERSION,
 } from '@revenge-mod/devtools-shared/constants'
@@ -134,6 +135,82 @@ interface PendingMcp {
 
 const pendingMcp = new Map<string, PendingMcp>()
 
+const APPROVAL_REQUIRED_COMMANDS = new Set<string>([MCPCommand.Eval])
+const sessionApprovedCommands = new Set<string>()
+let approvalQueue: Promise<unknown> = Promise.resolve()
+let denyActiveApproval: (() => void) | null = null
+
+function formatMcpArgs(args: Record<string, unknown>): string {
+	if (!Object.keys(args).length) return ''
+
+	const preview = util.inspect(args, {
+		colors: true,
+		depth: 3,
+		breakLength: Infinity,
+		compact: true,
+	})
+
+	return preview.length > 256 ? `${preview.slice(0, 256)}\u2026` : preview
+}
+
+/**
+ * Ask the developer to approve a sensitive MCP command via the REPL.
+ * Prompts are serialized so concurrent requests never overlap.
+ * CTRL+C while the prompt is shown denies the request.
+ *
+ * @returns `true` if allowed (once or for the session), `false` if denied.
+ */
+function requestApproval(
+	command: string,
+	clientId: string,
+	args: Record<string, unknown>,
+): Promise<boolean> {
+	const ask = () =>
+		new Promise<boolean>(resolve => {
+			if (sessionApprovedCommands.has(command)) return resolve(true)
+
+			clearPromptLine()
+			logger.warn(`MCP wants to run "${command}" on client ${clientId}:`)
+			logger.log(
+				util.inspect(args, { colors: true, depth: 5, breakLength: 80 }),
+			)
+
+			const controller = new AbortController()
+
+			denyActiveApproval = () => {
+				denyActiveApproval = null
+				controller.abort()
+				logger.warn(`"${command}" denied`)
+				resolve(false)
+				rl.prompt()
+			}
+
+			rl.question(
+				'Allow? [y]es once / [s]ession / [n]o > ',
+				{ signal: controller.signal },
+				answer => {
+					denyActiveApproval = null
+					const a = answer.trim().toLowerCase()
+					if (a === 's' || a === 'session') {
+						sessionApprovedCommands.add(command)
+						logger.success(`"${command}" allowed for this session`)
+						resolve(true)
+					} else if (a === 'y' || a === 'yes' || a === 'allow') {
+						resolve(true)
+					} else {
+						logger.warn(`"${command}" denied`)
+						resolve(false)
+					}
+					rl.prompt()
+				},
+			)
+		})
+
+	const result = approvalQueue.then(ask, ask)
+	approvalQueue = result
+	return result
+}
+
 /**
  * Resolve the target client for an MCP command.
  *
@@ -171,10 +248,27 @@ function resolveTargetClient(clientId?: string): {
 }
 
 /**
- * Send an MCP command to a client and await its result.
+ * Send an MCP command to a client and await its result. Commands requiring
+ * approval prompt the developer first; denial rejects back to the caller.
  */
-const runMcpCommand: RunMcpCommandFn = (command, args, clientId) => {
+const runMcpCommand: RunMcpCommandFn = async (command, args, clientId) => {
 	const { ws, data } = resolveTargetClient(clientId)
+
+	const target = data.alias ? `${data.id} (${data.alias})` : data.id
+	const preview = formatMcpArgs(args)
+	logger.server(`MCP → ${target}: ${command}${preview ? ` ${preview}` : ''}`)
+
+	if (
+		APPROVAL_REQUIRED_COMMANDS.has(command) &&
+		!sessionApprovedCommands.has(command)
+	) {
+		const allowed = await requestApproval(command, data.id, args)
+		if (!allowed)
+			throw new Error(
+				`The developer denied this "${command}" request. Do not retry the same code; ask the developer for permission or use other tools instead.`,
+			)
+	}
+
 	const id = crypto.randomUUID()
 
 	const message: Message = {
@@ -189,7 +283,6 @@ const runMcpCommand: RunMcpCommandFn = (command, args, clientId) => {
 		}, settings.server.mcp.commandTimeout)
 
 		pendingMcp.set(id, { clientId: data.id, resolve, reject, timer })
-		logger.server(`MCP → ${data.id}: ${command}`)
 		ws.send(serialize(message))
 	})
 }
@@ -363,6 +456,36 @@ const rl = readline.createInterface({
 	prompt: '> ',
 })
 
+let sigintArmed = false
+
+rl.on('SIGINT', () => {
+	process.stdout.write('^C\n')
+
+	if (denyActiveApproval) {
+		denyActiveApproval()
+		return
+	}
+
+	const line: string = (rl as any).line ?? ''
+
+	if (line) {
+		;(rl as any).line = ''
+		;(rl as any).cursor = 0
+		sigintArmed = false
+		rl.prompt()
+		return
+	}
+
+	if (sigintArmed) {
+		logger.warn('Shutting down...')
+		process.exit(0)
+	}
+
+	sigintArmed = true
+	logger.log('(Press CTRL+C again to exit)')
+	rl.prompt()
+})
+
 server.listen(PORT, () => {
 	logger.success(`Server running on: ws://localhost:${PORT}`)
 
@@ -382,7 +505,7 @@ server.listen(PORT, () => {
 	}
 
 	logger.log('Type .help for commands')
-	logger.log('Press CTRL+C to exit')
+	logger.log('Press CTRL+C twice to exit')
 	rl.prompt()
 })
 
@@ -535,6 +658,7 @@ if (WATCH_PATH) {
 }
 
 rl.on('line', line => {
+	sigintArmed = false
 	const trimmed = line.trim()
 	clearPromptLine()
 
@@ -553,6 +677,9 @@ rl.on('line', line => {
 			logger.log('  .map+ var path       - Add variable mapping')
 			logger.log('  .map- var            - Remove variable mapping')
 			logger.log('  .map                 - Show current mappings')
+			logger.log(
+				'  .run <client> <code> - Execute code on a specific client (ID or alias)',
+			)
 			logger.log('  .setting key [value] - Get/set setting')
 			logger.log('  .help, ?             - Show this help')
 			logger.log('  .exit, .quit, .q     - Exit server')
@@ -578,6 +705,36 @@ rl.on('line', line => {
 						`  ${data.id}${data.alias ? ` (${data.alias})` : ''} - v${data.version}${data.info ? ` - ${data.info}` : ''}`,
 					)
 				}
+			}
+			break
+		}
+
+		case '.run': {
+			const rest = trimmed.slice('.run'.length).trim()
+			const spaceIndex = rest.search(/\s/)
+			if (spaceIndex === -1) {
+				logger.warn('Usage: .run <client_id> <code>')
+				break
+			}
+
+			const target = rest.slice(0, spaceIndex)
+			const code = rest.slice(spaceIndex + 1).trim()
+
+			try {
+				const { ws, data } = resolveTargetClient(target)
+				const runMsg: RunMessage = {
+					type: MessageType.Run,
+					data: {
+						code,
+						mappings: Object.fromEntries(mappings),
+					},
+				}
+				ws.send(serialize(runMsg))
+				logger.server(
+					`Sent code to ${data.alias ? `${data.id} (${data.alias})` : data.id}`,
+				)
+			} catch (e) {
+				logger.error((e as Error).message)
 			}
 			break
 		}

@@ -119,6 +119,21 @@ Clients may self-assign an alias on connect (similar to ADB device IDs). Aliases
 
 The MCP request timeout (how long the server waits for a client to respond) is configurable at runtime via the `server.mcp.commandTimeout` setting (milliseconds, default `30000`): `.setting server.mcp.commandTimeout 60000`. Long-running `discord_flux_listen` / `get_modules` waits should stay below this value.
 
+Incoming tool calls are logged in the server terminal with a truncated preview of their arguments. Calls to `eval` additionally require interactive approval in the REPL:
+
+```text
+MCP wants to run "eval" on client a1b2c3d4:
+{ code: 'vars.mcp.x = 1' }
+Allow? [y]es once / [s]ession / [n]o >
+```
+
+- `y` allows this single call
+- `s` allows `eval` for the rest of the server session
+- `n` (or anything else) denies the call — the LLM receives an error telling it not to retry and to ask the developer for permission
+- `CTRL+C` while the prompt is shown also denies the call
+
+In the REPL, `CTRL+C` discards the current input line; pressing it twice on an empty line exits the server.
+
 > [!WARNING]
 > MCP tools evaluate arbitrary code in the connected client (same trust model as the REPL). It is opt-in via `--mcp` and intended for trusted local connections only.
 
@@ -137,6 +152,15 @@ List all connected clients with their IDs and protocol versions.
 Connected clients (2):
   a1b2c3d4 - v2
   e5f6g7h8 - v2
+```
+
+#### `.run <client> <code>`
+
+Execute code on a specific client only (by ID or alias; exact ID matches take precedence), instead of broadcasting to all clients like plain `<code>` input does.
+
+```text
+> .run a1b2c3d4 console.log('hi')
+> .run my-device vars.x = 1
 ```
 
 ### 🗺️ Mappings
