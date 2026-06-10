@@ -6,9 +6,9 @@ import {
 	PROTOCOL_VERSION,
 } from '@revenge-mod/devtools-shared/constants'
 import {
-	createDepthLimitedProxy,
 	deserialize,
 	serialize,
+	snapshot,
 } from '@revenge-mod/devtools-shared/serializer'
 import {
 	getDisplayName,
@@ -259,7 +259,7 @@ export class DevToolsClient {
 			const result = func(...Object.values(scope))
 
 			this.log(LogLevel.Default, [
-				createDepthLimitedProxy(result, this.settings.log.inspectDepth),
+				snapshot(result, this.settings.log.inspectDepth),
 			])
 		} catch (e: any) {
 			this.log(LogLevel.Error, [e.stack ?? e.message ?? String(e)])
@@ -480,7 +480,7 @@ export class DevToolsClient {
 				(exports: any, moduleId: number) => {
 					results.push({
 						id: moduleId,
-						exports: createDepthLimitedProxy(exports, depth),
+						exports: snapshot(exports, depth),
 					})
 					if (results.length >= max) finish()
 				},
@@ -516,10 +516,7 @@ export class DevToolsClient {
 		for (const [exports, id] of finders.lookupModules(filter, options)) {
 			modules.push({
 				id,
-				exports:
-					exports === undefined
-						? null
-						: createDepthLimitedProxy(exports, depth),
+				exports: exports === undefined ? null : snapshot(exports, depth),
 			})
 			if (modules.length >= max) break
 		}
@@ -538,7 +535,7 @@ export class DevToolsClient {
 
 		return {
 			id: args.id,
-			exports: createDepthLimitedProxy(exports, depth),
+			exports: snapshot(exports, depth),
 		}
 	}
 
@@ -547,7 +544,7 @@ export class DevToolsClient {
 		this.scope.vars[args.name] = value
 		return {
 			name: args.name,
-			value: createDepthLimitedProxy(value, this.settings.log.inspectDepth),
+			value: snapshot(value, this.settings.log.inspectDepth),
 		}
 	}
 
@@ -598,7 +595,7 @@ export class DevToolsClient {
 
 	private mcpEval(args: MCPEvalArgs): unknown {
 		const result = this.evalInScope(args.code)
-		return createDepthLimitedProxy(result, this.settings.log.inspectDepth)
+		return snapshot(result, this.settings.log.inspectDepth)
 	}
 
 	private mcpDiscordReload(): { reloading: boolean } {
@@ -648,7 +645,7 @@ export class DevToolsClient {
 
 			// The callback MUST return the payload to avoid blocking the event
 			const capture = (payload: any) => {
-				events.push(createDepthLimitedProxy(payload, depth))
+				events.push(snapshot(payload, depth))
 				if (events.length >= count) finish()
 				return payload
 			}
@@ -696,9 +693,7 @@ export class DevToolsClient {
 			logs: entries.map(entry => ({
 				level: entry.level,
 				time: entry.time,
-				message: entry.message.map(item =>
-					createDepthLimitedProxy(item, depth),
-				),
+				message: entry.message.map(item => snapshot(item, depth)),
 			})),
 		}
 	}
@@ -902,14 +897,17 @@ export class DevToolsClient {
 	 * ```
 	 */
 	log(level: LogLevelType, message: any[]) {
-		this.logs.push({ level, time: Date.now(), message })
+		const snapped = message.map(item =>
+			snapshot(item, this.settings.log.inspectDepth),
+		)
+		this.logs.push({ level, time: Date.now(), message: snapped })
 
 		if (!this.authenticated) return
 		if (level < this.settings.log.level) return
 
 		const msg: LogMessage = {
 			type: MessageType.Log,
-			data: { level, message },
+			data: { level, message: snapped },
 		}
 
 		this.send(msg)

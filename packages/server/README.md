@@ -268,7 +268,9 @@ The server uses a simple WebSocket protocol with message types:
 - `MCPRun` (5) - Server asks the client to run an MCP command
 - `MCPResult` (6) - Client returns the result of an MCP command
 
-The protocol version is currently `4`. Clients with incompatible versions are rejected.
+The protocol version is currently `5`. Clients with incompatible versions are rejected.
+
+Message payloads are serialized with [devalue](https://github.com/sveltejs/devalue). Values are snapshotted to a bounded depth on the client before sending: objects beyond the depth cap appear as `[Object]`/`[Function: name]` placeholders, accessors at the cap appear as `[Getter]`/`[Setter]`, symbol-keyed and non-enumerable properties are included, and cycles or repeated references within the depth window are preserved.
 
 ## 📝 Advanced usage
 

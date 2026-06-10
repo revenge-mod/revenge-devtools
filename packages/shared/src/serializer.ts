@@ -1,73 +1,15 @@
 /** biome-ignore-all lint/complexity/noBannedTypes: don't care */
 
 import chalk from 'chalk'
-import SuperJSON from 'superjson'
+import { parse, stringify } from 'devalue'
 
-const superjson = new SuperJSON()
-
-superjson.registerCustom<Function, string>(
-	{
-		isApplicable: (v): v is Function => typeof v === 'function',
-		serialize: v => v.name || '<anonymous>',
-		deserialize: v =>
-			// biome-ignore lint/complexity/useArrowFunction: THOU SHALL BE NAMED!!!
-			Object.defineProperty(function () {}, 'name', { value: v }),
-	},
-	'function',
-)
-
-superjson.registerCustom<symbol, string>(
-	{
-		isApplicable: (v): v is symbol => typeof v === 'symbol',
-		serialize: v => v.description ?? '',
-		deserialize: v => Symbol(v),
-	},
-	'symbol',
-)
-
-superjson.registerCustom<object, string>(
-	{
-		isApplicable: (v): v is object => {
-			// Check if it's an object (not null, not array, not a basic type)
-			if (
-				v == null ||
-				typeof v !== 'object' ||
-				Array.isArray(v) ||
-				v.constructor === Object
-			) {
-				return false
-			}
-			// Check if it has Symbol.toStringTag
-			return Symbol.toStringTag in v
-		},
-		serialize: v => {
-			// Use Object.prototype.toString to get the tag
-			return Object.prototype.toString.call(v)
-		},
-		deserialize: v => {
-			// Ensure v is treated as a string
-			const tagString = String(v)
-			// Create a simple object with the toString representation
-			return {
-				[Symbol.for('nodejs.util.inspect.custom')]() {
-					return chalk.cyan(tagString)
-				},
-				toString() {
-					return tagString
-				},
-			}
-		},
-	},
-	'toStringTag',
-)
+const inspect = Symbol.for('nodejs.util.inspect.custom')
 
 class MaxDepthObject {
-	// Custom inspect for Node.js environments
-	[Symbol.for('nodejs.util.inspect.custom')]() {
+	[inspect]() {
 		return chalk.cyan('[Object]')
 	}
 
-	// Fallback toString for browsers/non-Node environments
 	toString() {
 		return '[Object]'
 	}
@@ -76,12 +18,10 @@ class MaxDepthObject {
 class MaxDepthFunction {
 	constructor(public name: string = 'anonymous') {}
 
-	// Custom inspect for Node.js environments
-	[Symbol.for('nodejs.util.inspect.custom')]() {
+	[inspect]() {
 		return chalk.cyan(`[Function: ${this.name}]`)
 	}
 
-	// Fallback toString for browsers/non-Node environments
 	toString() {
 		return `[Function: ${this.name}]`
 	}
@@ -90,12 +30,10 @@ class MaxDepthFunction {
 class MaxDepthGetter {
 	constructor(public name: string) {}
 
-	// Custom inspect for Node.js environments
-	[Symbol.for('nodejs.util.inspect.custom')]() {
-		return chalk.cyan(`[Getter]`)
+	[inspect]() {
+		return chalk.cyan('[Getter]')
 	}
 
-	// Fallback toString for browsers/non-Node environments
 	toString() {
 		return '[Getter]'
 	}
@@ -104,12 +42,10 @@ class MaxDepthGetter {
 class MaxDepthSetter {
 	constructor(public name: string) {}
 
-	// Custom inspect for Node.js environments
-	[Symbol.for('nodejs.util.inspect.custom')]() {
-		return chalk.cyan(`[Setter]`)
+	[inspect]() {
+		return chalk.cyan('[Setter]')
 	}
 
-	// Fallback toString for browsers/non-Node environments
 	toString() {
 		return '[Setter]'
 	}
@@ -118,144 +54,243 @@ class MaxDepthSetter {
 class MaxDepthGetterSetter {
 	constructor(public name: string) {}
 
-	// Custom inspect for Node.js environments
-	[Symbol.for('nodejs.util.inspect.custom')]() {
-		return chalk.cyan(`[Getter/Setter]`)
+	[inspect]() {
+		return chalk.cyan('[Getter/Setter]')
 	}
 
-	// Fallback toString for browsers/non-Node environments
 	toString() {
 		return '[Getter/Setter]'
 	}
 }
 
-superjson.registerClass(MaxDepthObject, {
-	identifier: 'MaxDepthObject',
-	allowProps: [],
-})
+class TaggedObject {
+	constructor(public tag: string) {}
 
-superjson.registerClass(MaxDepthFunction, {
-	identifier: 'MaxDepthFunction',
-	allowProps: ['name'],
-})
-
-superjson.registerClass(MaxDepthGetter, {
-	identifier: 'MaxDepthGetter',
-	allowProps: ['name'],
-})
-
-superjson.registerClass(MaxDepthSetter, {
-	identifier: 'MaxDepthSetter',
-	allowProps: ['name'],
-})
-
-superjson.registerClass(MaxDepthGetterSetter, {
-	identifier: 'MaxDepthGetterSetter',
-	allowProps: ['name'],
-})
-
-/**
- * Creates a Proxy that limits object depth traversal.
- * @param obj - The object to wrap
- * @param maxDepth - Maximum depth to traverse (default: 2)
- * @param currentDepth - Current depth level (used internally)
- */
-export function createDepthLimitedProxy<T extends object>(
-	obj: T,
-	maxDepth = 2,
-	currentDepth = 0,
-): T {
-	// Handle null/undefined
-	if (obj == null) return obj
-
-	// Handle primitive types
-	if (typeof obj !== 'object' && typeof obj !== 'function') return obj
-
-	// Check if we've exceeded max depth
-	if (currentDepth >= maxDepth) {
-		if (typeof obj === 'function') {
-			return new MaxDepthFunction((obj as Function).name || 'anonymous') as any
-		}
-		return new MaxDepthObject() as any
+	[inspect]() {
+		return chalk.cyan(this.tag)
 	}
 
-	// Handle arrays
-	if (Array.isArray(obj)) {
-		return obj.map(item => {
-			if (item != null && typeof item === 'object') {
-				return createDepthLimitedProxy(item, maxDepth, currentDepth + 1)
-			}
-			return item
-		}) as any
+	toString() {
+		return this.tag
 	}
+}
 
-	return new Proxy(obj, {
-		get(target, prop, receiver) {
-			// Check if this property is a getter/setter at max depth
-			const descriptor = Object.getOwnPropertyDescriptor(target, prop)
+function isPlaceholder(value: object): boolean {
+	return (
+		value instanceof MaxDepthObject ||
+		value instanceof MaxDepthFunction ||
+		value instanceof MaxDepthGetter ||
+		value instanceof MaxDepthSetter ||
+		value instanceof MaxDepthGetterSetter ||
+		value instanceof TaggedObject
+	)
+}
 
-			// If we're at max depth and this is an accessor property, show the getter/setter
-			if (currentDepth + 1 >= maxDepth && descriptor) {
-				const hasGetter = typeof descriptor.get === 'function'
-				const hasSetter = typeof descriptor.set === 'function'
+function isTagged(value: object): boolean {
+	try {
+		return (
+			value.constructor !== Object &&
+			Symbol.toStringTag in value &&
+			!(value instanceof Map) &&
+			!(value instanceof Set)
+		)
+	} catch {
+		return false
+	}
+}
 
-				if (hasGetter && hasSetter) {
-					return new MaxDepthGetterSetter(String(prop))
-				}
-				if (hasGetter) {
-					return new MaxDepthGetter(String(prop))
-				}
-				if (hasSetter) {
-					return new MaxDepthSetter(String(prop))
-				}
-			}
-
-			const value = Reflect.get(target, prop, receiver)
-
-			// If the value is an object/function and the next level would exceed max depth, return the message
-			if (
-				value != null &&
-				(typeof value === 'object' || typeof value === 'function') &&
-				currentDepth + 1 >= maxDepth
-			) {
-				if (typeof value === 'function') {
-					return new MaxDepthFunction((value as Function).name || 'anonymous')
-				}
-				return new MaxDepthObject()
-			}
-
-			// If the value is an object or function, wrap it in a proxy
-			if (
-				value != null &&
-				(typeof value === 'object' || typeof value === 'function')
-			) {
-				return createDepthLimitedProxy(value, maxDepth, currentDepth + 1)
-			}
-
-			return value
-		},
-		ownKeys(target) {
-			return Reflect.ownKeys(target)
-		},
-		getOwnPropertyDescriptor(target, prop) {
-			return Reflect.getOwnPropertyDescriptor(target, prop)
-		},
-	})
+function symbolKeyName(key: symbol, copy: object): string {
+	const base = `[Symbol(${key.description ?? ''})]`
+	let name = base
+	let index = 1
+	while (name in copy) name = `${base}#${index++}`
+	return name
 }
 
 /**
- * Serialize a value to JSON string using superjson with custom transformers.
- * Handles functions, symbols, and special objects gracefully.
+ * Creates an eager, depth-bounded snapshot of a value as plain objects,
+ * arrays, and placeholder instances. Repeated references and cycles within
+ * the depth window are preserved as real shared references.
+ *
+ * @param value - The value to snapshot
+ * @param maxDepth - Maximum depth to traverse (default: 2)
+ */
+export function snapshot<T>(value: T, maxDepth = 2): T {
+	return snap(value, maxDepth, 0, new WeakMap()) as T
+}
+
+function snap(
+	value: unknown,
+	maxDepth: number,
+	depth: number,
+	seen: WeakMap<object, unknown>,
+): unknown {
+	if (value == null) return value
+
+	if (typeof value === 'function')
+		return new MaxDepthFunction((value as Function).name || 'anonymous')
+
+	if (typeof value !== 'object') return value
+
+	if (isPlaceholder(value)) return value
+
+	if (value instanceof Date || value instanceof RegExp || value instanceof URL)
+		return value
+
+	if (seen.has(value)) return seen.get(value)
+
+	if (depth >= maxDepth) return new MaxDepthObject()
+
+	if (value instanceof Map) {
+		const copy = new Map()
+		seen.set(value, copy)
+		for (const [k, v] of value)
+			copy.set(
+				snap(k, maxDepth, depth + 1, seen),
+				snap(v, maxDepth, depth + 1, seen),
+			)
+		return copy
+	}
+
+	if (value instanceof Set) {
+		const copy = new Set()
+		seen.set(value, copy)
+		for (const v of value) copy.add(snap(v, maxDepth, depth + 1, seen))
+		return copy
+	}
+
+	if (Array.isArray(value)) {
+		const copy: unknown[] = []
+		seen.set(value, copy)
+		for (let i = 0; i < value.length; i++) {
+			try {
+				copy[i] = snap(value[i], maxDepth, depth + 1, seen)
+			} catch {
+				copy[i] = new MaxDepthObject()
+			}
+		}
+		return copy
+	}
+
+	if (isTagged(value))
+		return new TaggedObject(Object.prototype.toString.call(value))
+
+	const copy: Record<string, unknown> = {}
+	seen.set(value, copy)
+
+	for (const key of Reflect.ownKeys(value)) {
+		let descriptor: PropertyDescriptor | undefined
+		try {
+			descriptor = Object.getOwnPropertyDescriptor(value, key)
+		} catch {
+			continue
+		}
+		if (!descriptor) continue
+
+		let child: unknown
+		if ('value' in descriptor) {
+			try {
+				child = snap(descriptor.value, maxDepth, depth + 1, seen)
+			} catch {
+				child = new MaxDepthObject()
+			}
+		} else {
+			const hasGetter = typeof descriptor.get === 'function'
+			const hasSetter = typeof descriptor.set === 'function'
+
+			if (depth + 1 >= maxDepth) {
+				child =
+					hasGetter && hasSetter
+						? new MaxDepthGetterSetter(String(key))
+						: hasGetter
+							? new MaxDepthGetter(String(key))
+							: new MaxDepthSetter(String(key))
+			} else if (hasGetter) {
+				try {
+					child = snap(descriptor.get!.call(value), maxDepth, depth + 1, seen)
+				} catch {
+					child = new MaxDepthGetter(String(key))
+				}
+			} else {
+				child = new MaxDepthSetter(String(key))
+			}
+		}
+
+		const name = typeof key === 'symbol' ? symbolKeyName(key, copy) : key
+		copy[name] = child
+	}
+
+	return copy
+}
+
+const reducers: Record<string, (value: unknown) => unknown> = {
+	MaxDepthObject: v => v instanceof MaxDepthObject && [],
+	MaxDepthFunction: v => v instanceof MaxDepthFunction && [v.name],
+	MaxDepthGetter: v => v instanceof MaxDepthGetter && [v.name],
+	MaxDepthSetter: v => v instanceof MaxDepthSetter && [v.name],
+	MaxDepthGetterSetter: v => v instanceof MaxDepthGetterSetter && [v.name],
+	TaggedObject: v => v instanceof TaggedObject && [v.tag],
+	URL: v => typeof URL !== 'undefined' && v instanceof URL && [v.href],
+	symbol: v => typeof v === 'symbol' && [v.description ?? ''],
+	function: v =>
+		typeof v === 'function' && [(v as Function).name || '<anonymous>'],
+	instance: v => {
+		if (v === null || typeof v !== 'object') return false
+		let proto: object | null
+		try {
+			proto = Object.getPrototypeOf(v)
+		} catch {
+			return [{}]
+		}
+		if (
+			proto === Object.prototype ||
+			proto === Array.prototype ||
+			proto === null
+		)
+			return false
+		if (
+			v instanceof Date ||
+			v instanceof RegExp ||
+			v instanceof Map ||
+			v instanceof Set
+		)
+			return false
+		return [{ ...v }]
+	},
+}
+
+const revivers: Record<string, (value: any) => unknown> = {
+	MaxDepthObject: () => new MaxDepthObject(),
+	MaxDepthFunction: ([name]: [string]) => new MaxDepthFunction(name),
+	MaxDepthGetter: ([name]: [string]) => new MaxDepthGetter(name),
+	MaxDepthSetter: ([name]: [string]) => new MaxDepthSetter(name),
+	MaxDepthGetterSetter: ([name]: [string]) => new MaxDepthGetterSetter(name),
+	TaggedObject: ([tag]: [string]) => new TaggedObject(tag),
+	URL: ([href]: [string]) => new URL(href),
+	symbol: ([description]: [string]) => Symbol(description),
+	function: ([name]: [string]) =>
+		// biome-ignore lint/complexity/useArrowFunction: THOU SHALL BE NAMED!!!
+		Object.defineProperty(function () {}, 'name', { value: name }),
+	instance: ([props]: [Record<string, unknown>]) => props,
+}
+
+/**
+ * Serialize a value to a JSON string using devalue with custom reducers.
+ * Handles functions, symbols, depth placeholders, and special objects.
  *
  * @param value - Value to serialize
  * @returns JSON string representation
  */
-export const serialize = superjson.stringify.bind(superjson)
+export function serialize(value: unknown): string {
+	return stringify(value, reducers)
+}
 
 /**
- * Deserialize a JSON string back to its original value using superjson.
+ * Deserialize a JSON string back to its original value using devalue.
  *
  * @param json - JSON string to deserialize
  * @returns Deserialized value
  */
-export const deserialize = superjson.parse.bind(superjson)
+export function deserialize<T = unknown>(json: string): T {
+	return parse(json, revivers) as T
+}

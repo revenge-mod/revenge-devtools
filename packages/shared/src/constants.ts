@@ -89,4 +89,4 @@ export const DEFAULT_SETTINGS: Settings = {
  * Current protocol version for client-server compatibility.
  * Clients and servers with different versions may be incompatible.
  */
-export const PROTOCOL_VERSION = 4
+export const PROTOCOL_VERSION = 5
