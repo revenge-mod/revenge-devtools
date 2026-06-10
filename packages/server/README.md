@@ -81,42 +81,43 @@ Point your MCP client at `http://localhost:<port><mcp-path>` (default `http://lo
 
 #### Modules
 
-- `revenge_get_modules` - Find Metro/Revenge modules by a named filter (e.g. `withProps`) and a stringified array of arguments (evaluated in the client scope, so dynamic values are passable). Returns matching module IDs and a depth-limited shape of their exports. Supports `max` and `timeout` to wait for matches.
-- `revenge_lookup_modules` - Synchronously look up all modules matching a filter. Set `initialize: false` to return matching IDs with `null` exports **without** initializing the modules (no side effects).
-- `revenge_require_module` - Require (initialize if needed) a Metro module by its ID and return a depth-limited shape of its exports.
+- `get_modules` - Find Metro/Revenge modules by a named filter (e.g. `withProps`) and a stringified array of arguments (evaluated in the client scope, so dynamic values are passable). Returns matching module IDs and a depth-limited shape of their exports. Supports `max` and `timeout` to wait for matches.
+- `lookup_modules` - Synchronously look up all modules matching a filter. Set `initialize: false` to return matching IDs with `null` exports **without** initializing the modules (no side effects).
+- `require_module` - Require (initialize if needed) a Metro module by its ID and return a depth-limited shape of its exports. Module source is Hermes bytecode and therefore unavailable.
 
 #### Scope & patching
 
-- `revenge_save_var` - Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls. Models are encouraged to persist their working state under the reserved `vars.mcp` object (always initialized to `{}`) instead of top-level `vars`, which belongs to the developer.
-- `revenge_patch_method` - Patch a method (`before` / `instead` / `after`) on a target object using the Revenge patcher. Returns a patch ID.
-- `revenge_unpatch_method` - Remove a patch by its ID.
-- `revenge_eval` - Evaluate arbitrary code in the client scope and return the depth-limited result.
-- `revenge_get_logs` - Query the client's buffered log history (most recent ~1000 entries), optionally filtered by `min_level` and limited via `limit`. Includes logs below the current forwarding level.
+- `save_var` - Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls. Models are encouraged to persist their working state under the reserved `vars.mcp` object (always initialized to `{}`) instead of top-level `vars`, which belongs to the developer.
+- `patch_method` - Patch a method (`before` / `instead` / `after`) on a target object using the Revenge patcher. Returns a patch ID.
+- `unpatch_method` - Remove a patch by its ID.
+- `eval` - Evaluate arbitrary code in the client scope and return the depth-limited result. Code is evaluated as an expression first, then as a function body — multi-statement code (`const`/`if`/loops) is supported; use an explicit `return` to choose the result.
+- `get_logs` - Query the client's buffered log history (most recent ~1000 entries), optionally filtered by `min_level` and limited via `limit`. Includes logs below the current forwarding level.
 
 #### React
 
-- `revenge_react_tree_get_root` - Get the live React root fiber and store it in `vars.mcp.reactFiber` (the default starting point for the other React tools).
-- `revenge_react_tree_match` - Depth-first search the fiber tree for the first fiber matching a stringified predicate `(fiber) => boolean`, visiting at most `depth` fibers (default 100). On match, stores the fiber in `vars.mcp.reactFiber` for chaining. `from` overrides the starting fiber.
-- `revenge_react_tree_traverse_structure` - Render a readable, indented outline of the fiber tree (component names, keys, prop summaries) up to `depth` levels (default 10), similar to the React DevTools component tree.
+- `react_tree_get_root` - Get the live React root fiber and store it in `vars.mcp.reactFiber` (the default starting point for the other React tools).
+- `react_tree_match` - Depth-first search the fiber tree for the first fiber matching a stringified predicate `(fiber) => boolean`, visiting at most `depth` fibers (default 100). On match, stores the fiber in `vars.mcp.reactFiber` for chaining. `from` overrides the starting fiber.
+- `react_tree_traverse_structure` - Render a readable, indented outline of the fiber tree (component names, keys, prop summaries) up to `depth` levels (default 10), similar to the React DevTools component tree. Host components (native views) are hidden and skipped by default, with their children promoted; pass `showHostComponents: true` to render them.
+- `react_tree_hooks` - Dump a fiber's React hook chain (walks `memoizedState.next`, up to `limit` hooks, default 50) with depth-limited state summaries. Defaults to the fiber stored in `vars.mcp.reactFiber`.
 
 #### Discord
 
-- `revenge_discord_reload` - Reload the Discord app via `BundleUpdaterManager` (the client connection will drop).
-- `revenge_discord_flux_listen` - Observe dispatched Flux events without blocking them, resolving once `count` events are captured or `timeout` elapses. Omit `event` to capture all events.
-- `revenge_discord_flux_patch` - Patch a Flux event with a hook; returning a falsy value blocks the event. Returns a patch ID (shares the same ID store as `revenge_patch_method`/`revenge_unpatch_method`).
-- `revenge_discord_flux_unpatch` - Remove a Flux patch by its ID.
+- `discord_reload` - Reload the Discord app via `BundleUpdaterManager` (the client connection will drop).
+- `discord_flux_listen` - Observe dispatched Flux events without blocking them, resolving once `count` events are captured or `timeout` elapses. Omit `event` to capture all events.
+- `discord_flux_patch` - Patch a Flux event with a hook; returning a falsy value blocks the event. Returns a patch ID (shares the same ID store as `patch_method`/`unpatch_method`).
+- `discord_flux_unpatch` - Remove a Flux patch by its ID.
 
 #### Server
 
-- `revenge_devtools_clients` - List the clients currently connected to the server, including their IDs and aliases. Reads server state directly, so it works even with no client connected.
+- `devtools_clients` - List the clients currently connected to the server, including their IDs and aliases. Reads server state directly, so it works even with no client connected.
 
-Most tools accept an optional `clientId` to target a specific client when more than one is connected (`revenge_devtools_clients` does not, as it is server-local). The `clientId` field accepts either a client ID or an alias; exact ID matches take precedence over aliases.
+Most tools accept an optional `clientId` to target a specific client when more than one is connected (`devtools_clients` does not, as it is server-local). The `clientId` field accepts either a client ID or an alias; exact ID matches take precedence over aliases.
 
 #### Client aliases
 
 Clients may self-assign an alias on connect (similar to ADB device IDs). Aliases are restricted to alphanumeric characters, `-` and `_` (case-sensitive, no spaces); invalid aliases are ignored with a warning. If two clients connect with the same alias, the **older** connection owns the alias until it disconnects, after which the newer one becomes reachable by it.
 
-The MCP request timeout (how long the server waits for a client to respond) is configurable at runtime via the `server.mcp.commandTimeout` setting (milliseconds, default `30000`): `.setting server.mcp.commandTimeout 60000`. Long-running `revenge_discord_flux_listen` / `revenge_get_modules` waits should stay below this value.
+The MCP request timeout (how long the server waits for a client to respond) is configurable at runtime via the `server.mcp.commandTimeout` setting (milliseconds, default `30000`): `.setting server.mcp.commandTimeout 60000`. Long-running `discord_flux_listen` / `get_modules` waits should stay below this value.
 
 > [!WARNING]
 > MCP tools evaluate arbitrary code in the connected client (same trust model as the REPL). It is opt-in via `--mcp` and intended for trusted local connections only.
@@ -270,7 +271,7 @@ The server uses a simple WebSocket protocol with message types:
 
 The protocol version is currently `5`. Clients with incompatible versions are rejected.
 
-Message payloads are serialized with [devalue](https://github.com/sveltejs/devalue). Values are snapshotted to a bounded depth on the client before sending: objects beyond the depth cap appear as `[Object]`/`[Function: name]` placeholders, accessors at the cap appear as `[Getter]`/`[Setter]`, symbol-keyed and non-enumerable properties are included, and cycles or repeated references within the depth window are preserved.
+Message payloads are serialized with [devalue](https://github.com/sveltejs/devalue). Values are snapshotted to a bounded depth on the client before sending: objects beyond the depth cap appear as previewed placeholders (`[Object {a, b, c, …}]`, `[Array(5)]`, `[Function: name]`), accessors at the cap appear as `[Getter]`/`[Setter]`, symbol-keyed and non-enumerable properties are included, and cycles or repeated references within the depth window are preserved.
 
 ## 📝 Advanced usage
 

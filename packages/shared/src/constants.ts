@@ -47,21 +47,22 @@ export const MessageType = {
  * MCP command names (and tool names) supported by the client runtime.
  */
 export const MCPCommand = {
-	GetModules: 'revenge_get_modules',
-	LookupModules: 'revenge_lookup_modules',
-	RequireModule: 'revenge_require_module',
-	SaveVar: 'revenge_save_var',
-	PatchMethod: 'revenge_patch_method',
-	UnpatchMethod: 'revenge_unpatch_method',
-	Eval: 'revenge_eval',
-	DiscordReload: 'revenge_discord_reload',
-	DiscordFluxListen: 'revenge_discord_flux_listen',
-	DiscordFluxPatch: 'revenge_discord_flux_patch',
-	DiscordFluxUnpatch: 'revenge_discord_flux_unpatch',
-	GetLogs: 'revenge_get_logs',
-	ReactTreeGetRoot: 'revenge_react_tree_get_root',
-	ReactTreeMatch: 'revenge_react_tree_match',
-	ReactTreeTraverseStructure: 'revenge_react_tree_traverse_structure',
+	GetModules: 'get_modules',
+	LookupModules: 'lookup_modules',
+	RequireModule: 'require_module',
+	SaveVar: 'save_var',
+	PatchMethod: 'patch_method',
+	UnpatchMethod: 'unpatch_method',
+	Eval: 'eval',
+	DiscordReload: 'discord_reload',
+	DiscordFluxListen: 'discord_flux_listen',
+	DiscordFluxPatch: 'discord_flux_patch',
+	DiscordFluxUnpatch: 'discord_flux_unpatch',
+	GetLogs: 'get_logs',
+	ReactTreeGetRoot: 'react_tree_get_root',
+	ReactTreeMatch: 'react_tree_match',
+	ReactTreeTraverseStructure: 'react_tree_traverse_structure',
+	ReactTreeHooks: 'react_tree_hooks',
 } as const
 
 /**

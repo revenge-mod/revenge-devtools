@@ -6,12 +6,14 @@ import { parse, stringify } from 'devalue'
 const inspect = Symbol.for('nodejs.util.inspect.custom')
 
 class MaxDepthObject {
+	constructor(public preview?: string) {}
+
 	[inspect]() {
-		return chalk.cyan('[Object]')
+		return chalk.cyan(this.preview ?? '[Object]')
 	}
 
 	toString() {
-		return '[Object]'
+		return this.preview ?? '[Object]'
 	}
 }
 
@@ -107,6 +109,39 @@ function symbolKeyName(key: symbol, copy: object): string {
 	return name
 }
 
+function functionName(fn: Function): string {
+	try {
+		const displayName = (fn as { displayName?: unknown }).displayName
+		if (typeof displayName === 'string' && displayName) return displayName
+	} catch {}
+
+	try {
+		if (fn.name) return fn.name
+	} catch {}
+
+	return 'anonymous'
+}
+
+function previewAtCap(value: object): MaxDepthObject {
+	try {
+		if (Array.isArray(value))
+			return new MaxDepthObject(`[Array(${value.length})]`)
+		if (value instanceof Map) return new MaxDepthObject(`[Map(${value.size})]`)
+		if (value instanceof Set) return new MaxDepthObject(`[Set(${value.size})]`)
+
+		const keys = Reflect.ownKeys(value).filter(
+			(k): k is string => typeof k === 'string',
+		)
+		if (!keys.length) return new MaxDepthObject()
+
+		const shown = keys.slice(0, 6)
+		const ellipsis = keys.length > shown.length ? ', \u2026' : ''
+		return new MaxDepthObject(`[Object {${shown.join(', ')}${ellipsis}}]`)
+	} catch {
+		return new MaxDepthObject()
+	}
+}
+
 /**
  * Creates an eager, depth-bounded snapshot of a value as plain objects,
  * arrays, and placeholder instances. Repeated references and cycles within
@@ -128,7 +163,7 @@ function snap(
 	if (value == null) return value
 
 	if (typeof value === 'function')
-		return new MaxDepthFunction((value as Function).name || 'anonymous')
+		return new MaxDepthFunction(functionName(value as Function))
 
 	if (typeof value !== 'object') return value
 
@@ -139,7 +174,7 @@ function snap(
 
 	if (seen.has(value)) return seen.get(value)
 
-	if (depth >= maxDepth) return new MaxDepthObject()
+	if (depth >= maxDepth) return previewAtCap(value)
 
 	if (value instanceof Map) {
 		const copy = new Map()
@@ -224,7 +259,7 @@ function snap(
 }
 
 const reducers: Record<string, (value: unknown) => unknown> = {
-	MaxDepthObject: v => v instanceof MaxDepthObject && [],
+	MaxDepthObject: v => v instanceof MaxDepthObject && [v.preview ?? null],
 	MaxDepthFunction: v => v instanceof MaxDepthFunction && [v.name],
 	MaxDepthGetter: v => v instanceof MaxDepthGetter && [v.name],
 	MaxDepthSetter: v => v instanceof MaxDepthSetter && [v.name],
@@ -232,8 +267,7 @@ const reducers: Record<string, (value: unknown) => unknown> = {
 	TaggedObject: v => v instanceof TaggedObject && [v.tag],
 	URL: v => typeof URL !== 'undefined' && v instanceof URL && [v.href],
 	symbol: v => typeof v === 'symbol' && [v.description ?? ''],
-	function: v =>
-		typeof v === 'function' && [(v as Function).name || '<anonymous>'],
+	function: v => typeof v === 'function' && [functionName(v as Function)],
 	instance: v => {
 		if (v === null || typeof v !== 'object') return false
 		let proto: object | null
@@ -260,7 +294,8 @@ const reducers: Record<string, (value: unknown) => unknown> = {
 }
 
 const revivers: Record<string, (value: any) => unknown> = {
-	MaxDepthObject: () => new MaxDepthObject(),
+	MaxDepthObject: ([preview]: [string | null]) =>
+		new MaxDepthObject(preview ?? undefined),
 	MaxDepthFunction: ([name]: [string]) => new MaxDepthFunction(name),
 	MaxDepthGetter: ([name]: [string]) => new MaxDepthGetter(name),
 	MaxDepthSetter: ([name]: [string]) => new MaxDepthSetter(name),
@@ -268,9 +303,7 @@ const revivers: Record<string, (value: any) => unknown> = {
 	TaggedObject: ([tag]: [string]) => new TaggedObject(tag),
 	URL: ([href]: [string]) => new URL(href),
 	symbol: ([description]: [string]) => Symbol(description),
-	function: ([name]: [string]) =>
-		// biome-ignore lint/complexity/useArrowFunction: THOU SHALL BE NAMED!!!
-		Object.defineProperty(function () {}, 'name', { value: name }),
+	function: ([name]: [string]) => new MaxDepthFunction(name),
 	instance: ([props]: [Record<string, unknown>]) => props,
 }
 

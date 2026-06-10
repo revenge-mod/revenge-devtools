@@ -59,7 +59,7 @@ export function createMcpServer(
 		},
 		{
 			instructions:
-				'When persisting values between tool calls (via revenge_save_var or revenge_eval), store them under `vars.mcp` (e.g. `vars.mcp.myModule = ...`) instead of top-level `vars`, which belongs to the developer. `vars.mcp` is always initialized to an empty object.',
+				'When persisting values between tool calls (via save_var or eval), store them under `vars.mcp` (e.g. `vars.mcp.myModule = ...`) instead of top-level `vars`, which belongs to the developer. `vars.mcp` is always initialized to an empty object.',
 		},
 	)
 
@@ -193,7 +193,7 @@ export function createMcpServer(
 		MCPCommand.SaveVar,
 		{
 			description:
-				'Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls. Prefer names under the reserved `mcp` object (e.g. name "mcp.myThing" via revenge_eval `vars.mcp.myThing = ...`) to avoid clobbering the developer\'s own vars.',
+				'Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls. Prefer names under the reserved `mcp` object (e.g. name "mcp.myThing" via eval `vars.mcp.myThing = ...`) to avoid clobbering the developer\'s own vars.',
 			inputSchema: {
 				name: z.string().describe('Variable name to store under `vars`.'),
 				expression: z
@@ -263,7 +263,7 @@ export function createMcpServer(
 		MCPCommand.Eval,
 		{
 			description:
-				'Evaluate arbitrary code in the client scope and return the depth-limited result. Use for anything not covered by the other tools. Persist values you need later under `vars.mcp` (always initialized), not top-level `vars`, which belongs to the developer.',
+				'Evaluate arbitrary code in the client scope and return the depth-limited result. Code is evaluated as an expression first, then as a function body \u2014 multi-statement code (const/if/loops) is supported; use an explicit `return` to choose the result. Use for anything not covered by the other tools. Persist values you need later under `vars.mcp` (always initialized), not top-level `vars`, which belongs to the developer.',
 			inputSchema: {
 				code: z.string().describe('Code to evaluate in the client scope.'),
 				clientId,
@@ -342,7 +342,7 @@ export function createMcpServer(
 		MCPCommand.DiscordFluxPatch,
 		{
 			description:
-				'Patch a Flux event with a hook function. The hook receives the payload; returning a falsy value BLOCKS the event, returning the (modified) payload passes it through. Returns a patch ID usable with revenge_discord_flux_unpatch (shares the same ID store as revenge_patch_method).',
+				'Patch a Flux event with a hook function. The hook receives the payload; returning a falsy value BLOCKS the event, returning the (modified) payload passes it through. Returns a patch ID usable with discord_flux_unpatch (shares the same ID store as patch_method).',
 			inputSchema: {
 				event: z
 					.string()
@@ -371,12 +371,12 @@ export function createMcpServer(
 		MCPCommand.DiscordFluxUnpatch,
 		{
 			description:
-				'Remove a Flux patch previously created with revenge_discord_flux_patch.',
+				'Remove a Flux patch previously created with discord_flux_patch.',
 			inputSchema: {
 				id: z
 					.number()
 					.int()
-					.describe('The patch ID returned by revenge_discord_flux_patch.'),
+					.describe('The patch ID returned by discord_flux_patch.'),
 				clientId,
 			},
 		},
@@ -485,7 +485,7 @@ export function createMcpServer(
 		MCPCommand.ReactTreeTraverseStructure,
 		{
 			description:
-				'Render a readable, indented outline of the React fiber tree (component names, keys, prop summaries), similar to the React DevTools component tree.',
+				'Render a readable, indented outline of the React fiber tree (component names, keys, prop summaries), similar to the React DevTools component tree. Host components (native views) are hidden and skipped by default, with their children promoted.',
 			inputSchema: {
 				from: z
 					.string()
@@ -499,6 +499,12 @@ export function createMcpServer(
 					.positive()
 					.optional()
 					.describe('Maximum tree depth to render (default 10).'),
+				showHostComponents: z
+					.boolean()
+					.optional()
+					.describe(
+						'Render host components (native views) too. Hidden and skipped by default (default false).',
+					),
 				clientId,
 			},
 		},
@@ -511,10 +517,46 @@ export function createMcpServer(
 		},
 	)
 
+	server.registerTool(
+		MCPCommand.ReactTreeHooks,
+		{
+			description:
+				"Dump a fiber's React hook chain (walks memoizedState.next) with depth-limited state summaries. Defaults to the fiber stored in `vars.mcp.reactFiber`.",
+			inputSchema: {
+				from: z
+					.string()
+					.optional()
+					.describe(
+						'Expression resolving to the fiber to read hooks from. Defaults to `vars.mcp.reactFiber`, falling back to the live root.',
+					),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('Maximum number of hooks to walk (default 50).'),
+				depth: z
+					.number()
+					.int()
+					.nonnegative()
+					.optional()
+					.describe("Depth to traverse when describing each hook's state."),
+				clientId,
+			},
+		},
+		async ({ clientId: cid, ...args }) => {
+			try {
+				return text(await run(MCPCommand.ReactTreeHooks, args, cid))
+			} catch (e: any) {
+				return errorText(e?.message ?? String(e))
+			}
+		},
+	)
+
 	/// SERVER-LOCAL TOOLS
 
 	server.registerTool(
-		'revenge_devtools_clients',
+		'devtools_clients',
 		{
 			description:
 				'List the DevTools clients currently connected to the server, including their IDs and aliases. Reads server state directly (does not require any client to be connected).',

@@ -33,6 +33,7 @@ import type {
 	MCPGetModulesArgs,
 	MCPLookupModulesArgs,
 	MCPPatchMethodArgs,
+	MCPReactTreeHooksArgs,
 	MCPReactTreeMatchArgs,
 	MCPReactTreeTraverseStructureArgs,
 	MCPRequireModuleArgs,
@@ -253,16 +254,13 @@ export class DevToolsClient {
 				scope[key] = this.resolveMapping(mapping as string)
 			}
 
-			// Wrap code to auto-return last expression
-			const wrappedCode = this.wrapCodeWithAutoReturn(msg.data.code)
-			const func = this.withScope(scope, wrappedCode)
-			const result = func(...Object.values(scope))
+			const result = this.evalInScope(msg.data.code, scope)
 
 			this.log(LogLevel.Default, [
 				snapshot(result, this.settings.log.inspectDepth),
 			])
 		} catch (e: any) {
-			this.log(LogLevel.Error, [e.stack ?? e.message ?? String(e)])
+			this.log(LogLevel.Error, [this.formatError(e)])
 		}
 	}
 
@@ -315,11 +313,69 @@ export class DevToolsClient {
 	//#region MCP
 
 	/**
-	 * Evaluate a code string against the client scope, auto-returning the last expression (same as the `Run` handler).
+	 * Evaluate a code string against a scope. The code is compiled as a single
+	 * expression first, then with the auto-return heuristic, then as a raw
+	 * function body (statements allowed, explicit `return` honored).
 	 */
-	private evalInScope(code: string): any {
-		const wrapped = this.wrapCodeWithAutoReturn(code)
-		return this.withScope(this.scope, wrapped)(...Object.values(this.scope))
+	private evalInScope(
+		code: string,
+		scope: Record<string, any> = this.scope,
+	): any {
+		const keys = Object.keys(scope)
+		let func: ((...args: unknown[]) => unknown) | undefined
+		let parseError: unknown
+
+		for (const body of [
+			`return (${code})`,
+			this.wrapCodeWithAutoReturn(code),
+			code,
+		]) {
+			try {
+				func = new Function(...keys, body) as (...args: unknown[]) => unknown
+				break
+			} catch (e) {
+				if (!(e instanceof SyntaxError)) throw e
+				parseError ??= e
+			}
+		}
+
+		if (!func)
+			throw new SyntaxError(
+				`${this.cleanParseError(parseError)} (code is evaluated as an expression first, then as a function body \u2014 use an explicit \`return\` for multi-statement code)`,
+			)
+
+		return func(...Object.values(scope))
+	}
+
+	/** Strip wrapper-relative line/column positions from a parse error message. */
+	private cleanParseError(e: unknown): string {
+		const message =
+			(e as Error)?.message ?? (e == null ? 'Invalid code' : String(e))
+		return message
+			.replace(/^\d+:\d+:?\s*/, '')
+			.replace(/\s*\(<anonymous>:\d+:\d+\)/g, '')
+			.replace(/<anonymous>:\d+:\d+:?\s*/g, '')
+			.trim()
+	}
+
+	/** Format an error with its stack trimmed to the first few frames. */
+	private formatError(e: any): string {
+		const stack = e?.stack
+		if (typeof stack !== 'string')
+			return e?.message ?? (e == null ? 'Unknown error' : String(e))
+
+		const lines = stack.split('\n')
+		const firstFrame = lines.findIndex(line => /^\s*at /.test(line))
+		if (firstFrame === -1) return stack
+
+		const frames = lines.slice(firstFrame)
+		if (frames.length <= 5) return stack
+
+		return [
+			...lines.slice(0, firstFrame),
+			...frames.slice(0, 5),
+			`    \u2026 (${frames.length - 5} more frames)`,
+		].join('\n')
 	}
 
 	/**
@@ -423,18 +479,16 @@ export class DevToolsClient {
 						args as MCPReactTreeTraverseStructureArgs,
 					)
 					break
+				case MCPCommand.ReactTreeHooks:
+					result = this.mcpReactTreeHooks(args as MCPReactTreeHooksArgs)
+					break
 				default:
 					throw new Error(`Unknown MCP command: ${command}`)
 			}
 
 			this.sendMCPResult(id, true, result)
 		} catch (e: any) {
-			this.sendMCPResult(
-				id,
-				false,
-				undefined,
-				e?.stack ?? e?.message ?? String(e),
-			)
+			this.sendMCPResult(id, false, undefined, this.formatError(e))
 		}
 	}
 
@@ -536,6 +590,7 @@ export class DevToolsClient {
 		return {
 			id: args.id,
 			exports: snapshot(exports, depth),
+			source: 'unavailable (Hermes bytecode)',
 		}
 	}
 
@@ -837,6 +892,7 @@ export class DevToolsClient {
 	): unknown {
 		const start = this.resolveReactFiber(args.from)
 		const maxDepth = args.depth ?? 10
+		const showHost = args.showHostComponents ?? false
 		const maxLines = 2000
 
 		const lines: string[] = []
@@ -844,7 +900,7 @@ export class DevToolsClient {
 
 		const formatLine = (fiber: Fiber, depth: number) => {
 			const { name, key } = this.describeFiber(fiber)
-			const host = isHostFiber(fiber) ? ' (host)' : ''
+			const host = showHost && isHostFiber(fiber) ? ' (host)' : ''
 			const keyPart = key != null ? ` key=${JSON.stringify(key)}` : ''
 			const props = this.summarizeProps(fiber.memoizedProps)
 			const propsPart = props ? ` ${props}` : ''
@@ -857,19 +913,73 @@ export class DevToolsClient {
 					truncated = true
 					return
 				}
+				if (!showHost && isHostFiber(fiber)) {
+					walk(fiber.child, depth)
+					continue
+				}
 				lines.push(formatLine(fiber, depth))
 				if (depth < maxDepth) walk(fiber.child, depth + 1)
 				else if (fiber.child) truncated = true
 			}
 		}
 
-		lines.push(formatLine(start, 0))
-		walk(start.child, 1)
+		if (!showHost && isHostFiber(start)) {
+			walk(start.child, 0)
+		} else {
+			lines.push(formatLine(start, 0))
+			walk(start.child, 1)
+		}
 
 		return {
 			depth: maxDepth,
 			truncated,
+			hostComponentsHidden: !showHost,
 			structure: lines.join('\n'),
+		}
+	}
+
+	private mcpReactTreeHooks(args: MCPReactTreeHooksArgs): unknown {
+		const fiber = this.resolveReactFiber(args.from)
+		const limit = args.limit ?? 50
+		const depth = args.depth ?? this.settings.log.inspectDepth
+
+		const first = fiber.memoizedState
+		const isHookNode = (node: any) =>
+			node != null &&
+			typeof node === 'object' &&
+			('memoizedState' in node || 'queue' in node) &&
+			'next' in node
+
+		if (!isHookNode(first))
+			return {
+				count: 0,
+				hooks: [],
+				truncated: false,
+				fiber: this.describeFiber(fiber),
+				note: 'fiber has no hook chain (not a function component, or not mounted)',
+			}
+
+		const hooks: Array<{ index: number; state: unknown; hasQueue: boolean }> =
+			[]
+		let truncated = false
+		let index = 0
+		for (let node: any = first; isHookNode(node); node = node.next) {
+			if (hooks.length >= limit) {
+				truncated = true
+				break
+			}
+			hooks.push({
+				index: index++,
+				state: snapshot(node.memoizedState, depth),
+				hasQueue: node.queue != null,
+			})
+		}
+
+		return {
+			count: hooks.length,
+			hooks,
+			truncated,
+			fiber: this.describeFiber(fiber),
 		}
 	}
 

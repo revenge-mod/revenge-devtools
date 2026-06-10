@@ -243,7 +243,7 @@ export interface MCPDiscordFluxPatchArgs {
 }
 
 export interface MCPDiscordFluxUnpatchArgs {
-	/** The patch ID returned by a previous `revenge_discord_flux_patch` call. */
+	/** The patch ID returned by a previous `discord_flux_patch` call. */
 	id: number
 }
 
@@ -287,24 +287,46 @@ export interface MCPReactTreeTraverseStructureArgs {
 	 * @default 10
 	 */
 	depth?: number
+	/**
+	 * Whether to render host components (native views). When `false`, host
+	 * fibers are hidden and skipped, with their children promoted.
+	 * @default false
+	 */
+	showHostComponents?: boolean
+}
+
+export interface MCPReactTreeHooksArgs {
+	/**
+	 * Stringified expression resolving to the fiber to read hooks from.
+	 * Defaults to `vars.mcp.reactFiber`, falling back to the live root fiber.
+	 */
+	from?: string
+	/**
+	 * Maximum number of hooks to walk in the `memoizedState.next` chain.
+	 * @default 50
+	 */
+	limit?: number
+	/** Depth to traverse when describing each hook's state. */
+	depth?: number
 }
 
 export interface MCPCommandArgsMap {
-	revenge_get_modules: MCPGetModulesArgs
-	revenge_lookup_modules: MCPLookupModulesArgs
-	revenge_require_module: MCPRequireModuleArgs
-	revenge_save_var: MCPSaveVarArgs
-	revenge_patch_method: MCPPatchMethodArgs
-	revenge_unpatch_method: MCPUnpatchMethodArgs
-	revenge_eval: MCPEvalArgs
-	revenge_discord_reload: MCPDiscordReloadArgs
-	revenge_discord_flux_listen: MCPDiscordFluxListenArgs
-	revenge_discord_flux_patch: MCPDiscordFluxPatchArgs
-	revenge_discord_flux_unpatch: MCPDiscordFluxUnpatchArgs
-	revenge_get_logs: MCPGetLogsArgs
-	revenge_react_tree_get_root: MCPReactTreeGetRootArgs
-	revenge_react_tree_match: MCPReactTreeMatchArgs
-	revenge_react_tree_traverse_structure: MCPReactTreeTraverseStructureArgs
+	get_modules: MCPGetModulesArgs
+	lookup_modules: MCPLookupModulesArgs
+	require_module: MCPRequireModuleArgs
+	save_var: MCPSaveVarArgs
+	patch_method: MCPPatchMethodArgs
+	unpatch_method: MCPUnpatchMethodArgs
+	eval: MCPEvalArgs
+	discord_reload: MCPDiscordReloadArgs
+	discord_flux_listen: MCPDiscordFluxListenArgs
+	discord_flux_patch: MCPDiscordFluxPatchArgs
+	discord_flux_unpatch: MCPDiscordFluxUnpatchArgs
+	get_logs: MCPGetLogsArgs
+	react_tree_get_root: MCPReactTreeGetRootArgs
+	react_tree_match: MCPReactTreeMatchArgs
+	react_tree_traverse_structure: MCPReactTreeTraverseStructureArgs
+	react_tree_hooks: MCPReactTreeHooksArgs
 }
 
 /**
