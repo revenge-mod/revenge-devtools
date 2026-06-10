@@ -87,10 +87,17 @@ Point your MCP client at `http://localhost:<port><mcp-path>` (default `http://lo
 
 #### Scope & patching
 
-- `revenge_save_var` - Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls.
+- `revenge_save_var` - Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls. Models are encouraged to persist their working state under the reserved `vars.mcp` object (always initialized to `{}`) instead of top-level `vars`, which belongs to the developer.
 - `revenge_patch_method` - Patch a method (`before` / `instead` / `after`) on a target object using the Revenge patcher. Returns a patch ID.
 - `revenge_unpatch_method` - Remove a patch by its ID.
 - `revenge_eval` - Evaluate arbitrary code in the client scope and return the depth-limited result.
+- `revenge_get_logs` - Query the client's buffered log history (most recent ~1000 entries), optionally filtered by `min_level` and limited via `limit`. Includes logs below the current forwarding level.
+
+#### React
+
+- `revenge_react_tree_get_root` - Get the live React root fiber and store it in `vars.mcp.reactFiber` (the default starting point for the other React tools).
+- `revenge_react_tree_match` - Depth-first search the fiber tree for the first fiber matching a stringified predicate `(fiber) => boolean`, visiting at most `depth` fibers (default 100). On match, stores the fiber in `vars.mcp.reactFiber` for chaining. `from` overrides the starting fiber.
+- `revenge_react_tree_traverse_structure` - Render a readable, indented outline of the fiber tree (component names, keys, prop summaries) up to `depth` levels (default 10), similar to the React DevTools component tree.
 
 #### Discord
 
@@ -101,9 +108,13 @@ Point your MCP client at `http://localhost:<port><mcp-path>` (default `http://lo
 
 #### Server
 
-- `revenge_devtools_clients` - List the clients currently connected to the server. Reads server state directly, so it works even with no client connected.
+- `revenge_devtools_clients` - List the clients currently connected to the server, including their IDs and aliases. Reads server state directly, so it works even with no client connected.
 
-Most tools accept an optional `clientId` to target a specific client when more than one is connected (`revenge_devtools_clients` does not, as it is server-local).
+Most tools accept an optional `clientId` to target a specific client when more than one is connected (`revenge_devtools_clients` does not, as it is server-local). The `clientId` field accepts either a client ID or an alias; exact ID matches take precedence over aliases.
+
+#### Client aliases
+
+Clients may self-assign an alias on connect (similar to ADB device IDs). Aliases are restricted to alphanumeric characters, `-` and `_` (case-sensitive, no spaces); invalid aliases are ignored with a warning. If two clients connect with the same alias, the **older** connection owns the alias until it disconnects, after which the newer one becomes reachable by it.
 
 The MCP request timeout (how long the server waits for a client to respond) is configurable at runtime via the `server.mcp.commandTimeout` setting (milliseconds, default `30000`): `.setting server.mcp.commandTimeout 60000`. Long-running `revenge_discord_flux_listen` / `revenge_get_modules` waits should stay below this value.
 
@@ -257,7 +268,7 @@ The server uses a simple WebSocket protocol with message types:
 - `MCPRun` (5) - Server asks the client to run an MCP command
 - `MCPResult` (6) - Client returns the result of an MCP command
 
-The protocol version is currently `3`. Clients with incompatible versions are rejected.
+The protocol version is currently `4`. Clients with incompatible versions are rejected.
 
 ## 📝 Advanced usage
 

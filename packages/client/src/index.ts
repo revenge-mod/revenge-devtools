@@ -10,6 +10,15 @@ import {
 	deserialize,
 	serialize,
 } from '@revenge-mod/devtools-shared/serializer'
+import {
+	getDisplayName,
+	getRDTHook,
+	isHostFiber,
+	isValidFiber,
+	onCommitFiberRoot,
+	traverseFiber,
+} from 'bippy'
+import { CircularBuffer } from 'mnemonist'
 import type {
 	ClientSettings,
 	HelloMessage,
@@ -20,9 +29,12 @@ import type {
 	MCPDiscordFluxPatchArgs,
 	MCPDiscordFluxUnpatchArgs,
 	MCPEvalArgs,
+	MCPGetLogsArgs,
 	MCPGetModulesArgs,
 	MCPLookupModulesArgs,
 	MCPPatchMethodArgs,
+	MCPReactTreeMatchArgs,
+	MCPReactTreeTraverseStructureArgs,
 	MCPRequireModuleArgs,
 	MCPResultMessage,
 	MCPRunMessage,
@@ -32,9 +44,16 @@ import type {
 	MessageType as MsgType,
 	RunMessage,
 } from '@revenge-mod/devtools-shared/types'
+import type { Fiber } from 'bippy'
 import type { RevengeScope } from './revenge-types'
 
 type MessageHandler = (msg: Message) => void
+
+interface LogEntry {
+	level: LogLevelType
+	time: number
+	message: any[]
+}
 
 /**
  * WebSocket client for connecting React Native apps to the Revenge Developer Tools server.
@@ -69,10 +88,16 @@ export class DevToolsClient {
 	/** Current client settings received from server */
 	settings: ClientSettings = DEFAULT_SETTINGS.client
 
-	private scope: Record<string, any> = { devTools: this, vars: {} }
+	private scope: Record<string, any> = { devTools: this, vars: { mcp: {} } }
 	private connected: boolean = false
 	private authenticated: boolean = false
 	private handlers = new Map<number, Set<MessageHandler>>()
+	private alias?: string
+
+	private logs = new CircularBuffer<LogEntry>(Array, 1000)
+
+	private reactRoot: Fiber | null = null
+	private reactCommitHooked = false
 
 	/** Store of active patches created via the `patch_method` MCP command. */
 	private patches = new Map<number, () => void>()
@@ -84,15 +109,18 @@ export class DevToolsClient {
 	 *
 	 * @param url - WebSocket server URL (e.g., "ws://localhost:7864")
 	 * @param info - Optional information string to identify this client
+	 * @param alias - Optional alias (alphanumeric, `-`, `_`) for targeting this client in MCP commands
 	 *
 	 * @example
 	 * ```ts
 	 * client.connect("ws://localhost:7864", "My React Native App")
 	 * ```
 	 */
-	connect(url: string, info?: string) {
+	connect(url: string, info?: string, alias?: string) {
 		const isOpen = this.ws?.readyState === WebSocket.OPEN
 		if (isOpen) return
+
+		this.alias = alias
 
 		try {
 			this.ws = new WebSocket(url)
@@ -145,7 +173,7 @@ export class DevToolsClient {
 	 * Clear all saved variables. Not the scope itself!
 	 */
 	clearVars() {
-		this.scope.vars = {}
+		this.scope.vars = { mcp: {} }
 	}
 
 	/**
@@ -174,6 +202,7 @@ export class DevToolsClient {
 			data: {
 				version: PROTOCOL_VERSION,
 				info,
+				alias: this.alias,
 			},
 		}
 		this.send(msg)
@@ -379,6 +408,20 @@ export class DevToolsClient {
 					break
 				case MCPCommand.DiscordFluxUnpatch:
 					result = this.mcpDiscordFluxUnpatch(args as MCPDiscordFluxUnpatchArgs)
+					break
+				case MCPCommand.GetLogs:
+					result = this.mcpGetLogs(args as MCPGetLogsArgs)
+					break
+				case MCPCommand.ReactTreeGetRoot:
+					result = this.mcpReactTreeGetRoot()
+					break
+				case MCPCommand.ReactTreeMatch:
+					result = this.mcpReactTreeMatch(args as MCPReactTreeMatchArgs)
+					break
+				case MCPCommand.ReactTreeTraverseStructure:
+					result = this.mcpReactTreeTraverseStructure(
+						args as MCPReactTreeTraverseStructureArgs,
+					)
 					break
 				default:
 					throw new Error(`Unknown MCP command: ${command}`)
@@ -638,6 +681,203 @@ export class DevToolsClient {
 		return this.removePatch(args.id)
 	}
 
+	private mcpGetLogs(args: MCPGetLogsArgs): unknown {
+		const minLevel = args.min_level ?? LogLevel.Debug
+		const depth = args.depth ?? this.settings.log.inspectDepth
+
+		let entries = (this.logs.toArray() as LogEntry[]).filter(
+			entry => entry.level >= minLevel,
+		)
+		if (args.limit != null && entries.length > args.limit)
+			entries = entries.slice(-args.limit)
+
+		return {
+			count: entries.length,
+			logs: entries.map(entry => ({
+				level: entry.level,
+				time: entry.time,
+				message: entry.message.map(item =>
+					createDepthLimitedProxy(item, depth),
+				),
+			})),
+		}
+	}
+
+	private ensureReactCommitHook() {
+		if (this.reactCommitHooked) return
+		this.reactCommitHooked = true
+		try {
+			onCommitFiberRoot(root => {
+				this.reactRoot = root.current
+			})
+		} catch {}
+	}
+
+	private getReactRootFiber(): Fiber {
+		this.ensureReactCommitHook()
+
+		const hook = getRDTHook() as any
+		if (typeof hook?.getFiberRoots === 'function')
+			for (const id of hook.renderers.keys())
+				for (const root of hook.getFiberRoots(id))
+					if (root?.current) return root.current
+
+		if (this.reactRoot) return this.reactRoot
+
+		throw new Error(
+			'React root fiber is unavailable. No renderer has registered with the DevTools hook and no commit has been observed yet.',
+		)
+	}
+
+	private resolveReactFiber(from?: string): Fiber {
+		if (from != null) {
+			const fiber = this.evalInScope(from)
+			if (!isValidFiber(fiber))
+				throw new Error('`from` must evaluate to a React fiber')
+			return fiber
+		}
+
+		const stored = this.scope.vars.mcp?.reactFiber
+		if (stored != null) {
+			if (!isValidFiber(stored))
+				throw new Error('`vars.mcp.reactFiber` is not a valid React fiber')
+			return stored
+		}
+
+		return this.getReactRootFiber()
+	}
+
+	private describeFiber(fiber: Fiber) {
+		return {
+			name:
+				getDisplayName(fiber.type) ??
+				(typeof fiber.type === 'string' ? fiber.type : `#${fiber.tag}`),
+			tag: fiber.tag,
+			key: fiber.key,
+		}
+	}
+
+	private mcpReactTreeGetRoot(): unknown {
+		const root = this.getReactRootFiber()
+		this.scope.vars.mcp ??= {}
+		this.scope.vars.mcp.reactFiber = root
+		return { stored: 'vars.mcp.reactFiber', fiber: this.describeFiber(root) }
+	}
+
+	private mcpReactTreeMatch(args: MCPReactTreeMatchArgs): unknown {
+		const predicate = this.evalExpression(args.predicate)
+		if (typeof predicate !== 'function')
+			throw new Error('`predicate` must evaluate to a function')
+
+		const start = this.resolveReactFiber(args.from)
+		const maxVisits = args.depth ?? 100
+
+		let visited = 0
+		let exceeded = false
+		const found = traverseFiber(start, fiber => {
+			if (++visited > maxVisits) {
+				exceeded = true
+				return true
+			}
+			try {
+				return Boolean(predicate(fiber))
+			} catch {
+				return false
+			}
+		})
+
+		if (!found || exceeded) return { matched: false, visited: visited - 1 }
+
+		this.scope.vars.mcp ??= {}
+		this.scope.vars.mcp.reactFiber = found
+		return {
+			matched: true,
+			visited,
+			stored: 'vars.mcp.reactFiber',
+			fiber: this.describeFiber(found),
+		}
+	}
+
+	private summarizeProps(props: any): string {
+		if (props == null || typeof props !== 'object') return ''
+
+		const parts: string[] = []
+		for (const key of Object.keys(props)) {
+			if (key === 'children') continue
+			if (parts.length >= 8) {
+				parts.push('\u2026')
+				break
+			}
+
+			const value = props[key]
+			let rendered: string
+			switch (typeof value) {
+				case 'string':
+					rendered = JSON.stringify(
+						value.length > 32 ? `${value.slice(0, 32)}\u2026` : value,
+					)
+					break
+				case 'function':
+					rendered = 'fn'
+					break
+				case 'object':
+					rendered =
+						value === null
+							? 'null'
+							: Array.isArray(value)
+								? `Array(${value.length})`
+								: '{\u2026}'
+					break
+				default:
+					rendered = String(value)
+			}
+			parts.push(`${key}=${rendered}`)
+		}
+
+		return parts.join(' ')
+	}
+
+	private mcpReactTreeTraverseStructure(
+		args: MCPReactTreeTraverseStructureArgs,
+	): unknown {
+		const start = this.resolveReactFiber(args.from)
+		const maxDepth = args.depth ?? 10
+		const maxLines = 2000
+
+		const lines: string[] = []
+		let truncated = false
+
+		const formatLine = (fiber: Fiber, depth: number) => {
+			const { name, key } = this.describeFiber(fiber)
+			const host = isHostFiber(fiber) ? ' (host)' : ''
+			const keyPart = key != null ? ` key=${JSON.stringify(key)}` : ''
+			const props = this.summarizeProps(fiber.memoizedProps)
+			const propsPart = props ? ` ${props}` : ''
+			return `${'  '.repeat(depth)}<${name}${keyPart}${propsPart}>${host}`
+		}
+
+		const walk = (node: Fiber | null, depth: number) => {
+			for (let fiber = node; fiber; fiber = fiber.sibling) {
+				if (lines.length >= maxLines) {
+					truncated = true
+					return
+				}
+				lines.push(formatLine(fiber, depth))
+				if (depth < maxDepth) walk(fiber.child, depth + 1)
+				else if (fiber.child) truncated = true
+			}
+		}
+
+		lines.push(formatLine(start, 0))
+		walk(start.child, 1)
+
+		return {
+			depth: maxDepth,
+			truncated,
+			structure: lines.join('\n'),
+		}
+	}
+
 	//#endregion MCP
 
 	private send(msg: Message) {
@@ -662,6 +902,8 @@ export class DevToolsClient {
 	 * ```
 	 */
 	log(level: LogLevelType, message: any[]) {
+		this.logs.push({ level, time: Date.now(), message })
+
 		if (!this.authenticated) return
 		if (level < this.settings.log.level) return
 

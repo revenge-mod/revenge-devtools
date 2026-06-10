@@ -58,6 +58,10 @@ export const MCPCommand = {
 	DiscordFluxListen: 'revenge_discord_flux_listen',
 	DiscordFluxPatch: 'revenge_discord_flux_patch',
 	DiscordFluxUnpatch: 'revenge_discord_flux_unpatch',
+	GetLogs: 'revenge_get_logs',
+	ReactTreeGetRoot: 'revenge_react_tree_get_root',
+	ReactTreeMatch: 'revenge_react_tree_match',
+	ReactTreeTraverseStructure: 'revenge_react_tree_traverse_structure',
 } as const
 
 /**
@@ -85,4 +89,4 @@ export const DEFAULT_SETTINGS: Settings = {
  * Current protocol version for client-server compatibility.
  * Clients and servers with different versions may be incompatible.
  */
-export const PROTOCOL_VERSION = 3
+export const PROTOCOL_VERSION = 4

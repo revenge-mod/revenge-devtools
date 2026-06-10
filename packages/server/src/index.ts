@@ -112,9 +112,12 @@ const {
 interface ClientData {
 	id: string
 	info?: string
+	alias?: string
 	version: number
 	authenticated: boolean
 }
+
+const ALIAS_PATTERN = /^[A-Za-z0-9_-]+$/
 
 const clients = new Map<WebSocket, ClientData>()
 const mappings = new Map<string, string>()
@@ -134,7 +137,8 @@ const pendingMcp = new Map<string, PendingMcp>()
 /**
  * Resolve the target client for an MCP command.
  *
- * @param clientId - Optional explicit client ID.
+ * @param clientId - Optional explicit client ID or alias. Exact ID matches
+ * take precedence; alias matches resolve to the oldest connection.
  * @returns The matching authenticated client's WebSocket and ID.
  * @throws If no client matches, or if ambiguous when no ID is given.
  */
@@ -147,8 +151,11 @@ function resolveTargetClient(clientId?: string): {
 	)
 
 	if (clientId) {
-		const match = authed.find(([, data]) => data.id === clientId)
-		if (!match) throw new Error(`No connected client with ID "${clientId}"`)
+		const match =
+			authed.find(([, data]) => data.id === clientId) ??
+			authed.find(([, data]) => data.alias === clientId)
+		if (!match)
+			throw new Error(`No connected client with ID or alias "${clientId}"`)
 		return { ws: match[0], data: match[1] }
 	}
 
@@ -214,6 +221,7 @@ const listClients: ListClientsFn = () =>
 	[...clients.values()].map(data => ({
 		id: data.id,
 		info: data.info,
+		alias: data.alias,
 		version: data.version,
 		authenticated: data.authenticated,
 	}))
@@ -392,7 +400,19 @@ function handleHello(ws: WebSocket, msg: HelloMessage) {
 	logger.server(`Client connected: ${clientData.id} (v${msg.data.version})`)
 
 	clientData.version = msg.data.version
+	clientData.info = msg.data.info
 	clientData.authenticated = true
+
+	if (msg.data.alias != null) {
+		if (ALIAS_PATTERN.test(msg.data.alias)) {
+			clientData.alias = msg.data.alias
+			logger.server(`Client ${clientData.id} alias: ${msg.data.alias}`)
+		} else {
+			logger.warn(
+				`Client ${clientData.id} sent invalid alias "${msg.data.alias}" (must match ${ALIAS_PATTERN}); ignoring`,
+			)
+		}
+	}
 
 	const response: HiMessage = {
 		type: MessageType.Hi,
@@ -555,7 +575,7 @@ rl.on('line', line => {
 				logger.log(`Connected clients (${clients.size}):`)
 				for (const [_ws, data] of clients.entries()) {
 					logger.log(
-						`  ${data.id} - v${data.version}${data.info ? ` - ${data.info}` : ''}`,
+						`  ${data.id}${data.alias ? ` (${data.alias})` : ''} - v${data.version}${data.info ? ` - ${data.info}` : ''}`,
 					)
 				}
 			}

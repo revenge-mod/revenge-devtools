@@ -19,6 +19,7 @@ export type RunMcpCommandFn = (
 export type ListClientsFn = () => Array<{
 	id: string
 	info?: string
+	alias?: string
 	version: number
 	authenticated: boolean
 }>
@@ -51,16 +52,22 @@ export function createMcpServer(
 	run: RunMcpCommandFn,
 	listClients: ListClientsFn,
 ): McpServer {
-	const server = new McpServer({
-		name: 'revenge-devtools',
-		version: pkg.version,
-	})
+	const server = new McpServer(
+		{
+			name: 'revenge-devtools',
+			version: pkg.version,
+		},
+		{
+			instructions:
+				'When persisting values between tool calls (via revenge_save_var or revenge_eval), store them under `vars.mcp` (e.g. `vars.mcp.myModule = ...`) instead of top-level `vars`, which belongs to the developer. `vars.mcp` is always initialized to an empty object.',
+		},
+	)
 
 	const clientId = z
 		.string()
 		.optional()
 		.describe(
-			'ID of the client to target. Defaults to the only connected client.',
+			'ID or alias of the client to target. Exact ID matches take precedence over aliases. Defaults to the only connected client.',
 		)
 
 	server.registerTool(
@@ -186,7 +193,7 @@ export function createMcpServer(
 		MCPCommand.SaveVar,
 		{
 			description:
-				'Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls.',
+				'Evaluate an expression in the client scope and store it under `vars[name]` (same shortcut as `vars.x = value`) for reuse in later calls. Prefer names under the reserved `mcp` object (e.g. name "mcp.myThing" via revenge_eval `vars.mcp.myThing = ...`) to avoid clobbering the developer\'s own vars.',
 			inputSchema: {
 				name: z.string().describe('Variable name to store under `vars`.'),
 				expression: z
@@ -256,7 +263,7 @@ export function createMcpServer(
 		MCPCommand.Eval,
 		{
 			description:
-				'Evaluate arbitrary code in the client scope and return the depth-limited result. Use for anything not covered by the other tools.',
+				'Evaluate arbitrary code in the client scope and return the depth-limited result. Use for anything not covered by the other tools. Persist values you need later under `vars.mcp` (always initialized), not top-level `vars`, which belongs to the developer.',
 			inputSchema: {
 				code: z.string().describe('Code to evaluate in the client scope.'),
 				clientId,
@@ -382,13 +389,135 @@ export function createMcpServer(
 		},
 	)
 
+	server.registerTool(
+		MCPCommand.GetLogs,
+		{
+			description:
+				"Query the client's buffered log history (bounded to the most recent ~1000 entries), optionally filtered by minimum level. Includes logs below the current forwarding level.",
+			inputSchema: {
+				min_level: z
+					.number()
+					.int()
+					.min(0)
+					.max(3)
+					.optional()
+					.describe(
+						'Minimum log level to include: 0 Debug, 1 Default, 2 Warn, 3 Error (default 0).',
+					),
+				limit: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('Maximum number of entries, taken from the most recent.'),
+				depth: z
+					.number()
+					.int()
+					.nonnegative()
+					.optional()
+					.describe('Depth to traverse when describing each message item.'),
+				clientId,
+			},
+		},
+		async ({ clientId: cid, ...args }) => {
+			try {
+				return text(await run(MCPCommand.GetLogs, args, cid))
+			} catch (e: any) {
+				return errorText(e?.message ?? String(e))
+			}
+		},
+	)
+
+	/* ---- React tools ---- */
+
+	server.registerTool(
+		MCPCommand.ReactTreeGetRoot,
+		{
+			description:
+				'Get the live React root fiber and store it in `vars.mcp.reactFiber`, which the other react_tree tools use as their default starting point.',
+			inputSchema: { clientId },
+		},
+		async ({ clientId: cid }) => {
+			try {
+				return text(await run(MCPCommand.ReactTreeGetRoot, {}, cid))
+			} catch (e: any) {
+				return errorText(e?.message ?? String(e))
+			}
+		},
+	)
+
+	server.registerTool(
+		MCPCommand.ReactTreeMatch,
+		{
+			description:
+				'Depth-first search the React fiber tree for the first fiber matching a predicate. On match, stores the fiber in `vars.mcp.reactFiber` for chaining (subsequent react_tree calls start from it).',
+			inputSchema: {
+				predicate: z
+					.string()
+					.describe(
+						'Predicate function expression `(fiber) => boolean` evaluated in client scope, e.g. "(f) => f.type?.name === \'ChannelItem\'".',
+					),
+				from: z
+					.string()
+					.optional()
+					.describe(
+						'Expression resolving to the fiber to start from. Defaults to `vars.mcp.reactFiber`, falling back to the live root.',
+					),
+				depth: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('Maximum number of fibers to visit (default 100).'),
+				clientId,
+			},
+		},
+		async ({ clientId: cid, ...args }) => {
+			try {
+				return text(await run(MCPCommand.ReactTreeMatch, args, cid))
+			} catch (e: any) {
+				return errorText(e?.message ?? String(e))
+			}
+		},
+	)
+
+	server.registerTool(
+		MCPCommand.ReactTreeTraverseStructure,
+		{
+			description:
+				'Render a readable, indented outline of the React fiber tree (component names, keys, prop summaries), similar to the React DevTools component tree.',
+			inputSchema: {
+				from: z
+					.string()
+					.optional()
+					.describe(
+						'Expression resolving to the fiber to start from. Defaults to `vars.mcp.reactFiber`, falling back to the live root.',
+					),
+				depth: z
+					.number()
+					.int()
+					.positive()
+					.optional()
+					.describe('Maximum tree depth to render (default 10).'),
+				clientId,
+			},
+		},
+		async ({ clientId: cid, ...args }) => {
+			try {
+				return text(await run(MCPCommand.ReactTreeTraverseStructure, args, cid))
+			} catch (e: any) {
+				return errorText(e?.message ?? String(e))
+			}
+		},
+	)
+
 	/// SERVER-LOCAL TOOLS
 
 	server.registerTool(
 		'revenge_devtools_clients',
 		{
 			description:
-				'List the DevTools clients currently connected to the server. Reads server state directly (does not require any client to be connected).',
+				'List the DevTools clients currently connected to the server, including their IDs and aliases. Reads server state directly (does not require any client to be connected).',
 			inputSchema: {},
 		},
 		async () => {

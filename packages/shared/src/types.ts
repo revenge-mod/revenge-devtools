@@ -104,6 +104,11 @@ export interface HelloMessage extends Message {
 		version: number
 		/** Optional information to identify the client */
 		info?: string
+		/**
+		 * Optional alias for targeting this client in MCP commands.
+		 * Must match `/^[A-Za-z0-9_-]+$/` or it is ignored by the server.
+		 */
+		alias?: string
 	}
 }
 
@@ -242,6 +247,48 @@ export interface MCPDiscordFluxUnpatchArgs {
 	id: number
 }
 
+export interface MCPGetLogsArgs {
+	/**
+	 * Minimum log level to include (0-3: Debug, Default, Warn, Error).
+	 * @default 0
+	 */
+	min_level?: number
+	/** Maximum number of entries to return, taken from the most recent. */
+	limit?: number
+	/** Depth to traverse when describing each log message item. */
+	depth?: number
+}
+
+export type MCPReactTreeGetRootArgs = Record<string, never>
+
+export interface MCPReactTreeMatchArgs {
+	/** Stringified predicate `(fiber) => boolean` evaluated in the client scope. */
+	predicate: string
+	/**
+	 * Stringified expression resolving to the fiber to start from.
+	 * Defaults to `vars.mcp.reactFiber`, falling back to the live root fiber.
+	 */
+	from?: string
+	/**
+	 * Maximum number of fibers to visit.
+	 * @default 100
+	 */
+	depth?: number
+}
+
+export interface MCPReactTreeTraverseStructureArgs {
+	/**
+	 * Stringified expression resolving to the fiber to start from.
+	 * Defaults to `vars.mcp.reactFiber`, falling back to the live root fiber.
+	 */
+	from?: string
+	/**
+	 * Maximum tree depth to render.
+	 * @default 10
+	 */
+	depth?: number
+}
+
 export interface MCPCommandArgsMap {
 	revenge_get_modules: MCPGetModulesArgs
 	revenge_lookup_modules: MCPLookupModulesArgs
@@ -254,6 +301,10 @@ export interface MCPCommandArgsMap {
 	revenge_discord_flux_listen: MCPDiscordFluxListenArgs
 	revenge_discord_flux_patch: MCPDiscordFluxPatchArgs
 	revenge_discord_flux_unpatch: MCPDiscordFluxUnpatchArgs
+	revenge_get_logs: MCPGetLogsArgs
+	revenge_react_tree_get_root: MCPReactTreeGetRootArgs
+	revenge_react_tree_match: MCPReactTreeMatchArgs
+	revenge_react_tree_traverse_structure: MCPReactTreeTraverseStructureArgs
 }
 
 /**
