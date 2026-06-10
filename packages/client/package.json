@@ -17,9 +17,7 @@
 		"README.md"
 	],
 	"dependencies": {
-		"@revenge-mod/devtools-shared": "^1.2.0",
-		"bippy": "^0.3.8",
-		"mnemonist": "^0.40.3"
+		"bippy": "^0.3.8"
 	},
 	"publishConfig": {
 		"access": "public"

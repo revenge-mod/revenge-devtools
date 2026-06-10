@@ -10,15 +10,6 @@ import {
 	serialize,
 	snapshot,
 } from '@revenge-mod/devtools-shared/serializer'
-import {
-	getDisplayName,
-	getRDTHook,
-	isHostFiber,
-	isValidFiber,
-	onCommitFiberRoot,
-	traverseFiber,
-} from 'bippy'
-import { CircularBuffer } from 'mnemonist'
 import type {
 	ClientSettings,
 	HelloMessage,
@@ -47,6 +38,22 @@ import type {
 } from '@revenge-mod/devtools-shared/types'
 import type { Fiber } from 'bippy'
 import type { RevengeScope } from './revenge-types'
+
+type BippyModule = typeof import('bippy')
+
+let bippyModule: Promise<BippyModule> | null = null
+
+/**
+ * Lazily load bippy. Importing it eagerly injects the React DevTools global
+ * hook at module evaluation time, slowing app startup even when DevTools is
+ * never used — so it is only loaded when a React tree command first runs.
+ */
+function loadBippy(): Promise<BippyModule> {
+	bippyModule ??= import('bippy')
+	return bippyModule
+}
+
+const LOG_BUFFER_CAPACITY = 1000
 
 type MessageHandler = (msg: Message) => void
 
@@ -95,7 +102,7 @@ export class DevToolsClient {
 	private handlers = new Map<number, Set<MessageHandler>>()
 	private alias?: string
 
-	private logs = new CircularBuffer<LogEntry>(Array, 1000)
+	private logs: LogEntry[] = []
 
 	private reactRoot: Fiber | null = null
 	private reactCommitHooked = false
@@ -469,18 +476,18 @@ export class DevToolsClient {
 					result = this.mcpGetLogs(args as MCPGetLogsArgs)
 					break
 				case MCPCommand.ReactTreeGetRoot:
-					result = this.mcpReactTreeGetRoot()
+					result = await this.mcpReactTreeGetRoot()
 					break
 				case MCPCommand.ReactTreeMatch:
-					result = this.mcpReactTreeMatch(args as MCPReactTreeMatchArgs)
+					result = await this.mcpReactTreeMatch(args as MCPReactTreeMatchArgs)
 					break
 				case MCPCommand.ReactTreeTraverseStructure:
-					result = this.mcpReactTreeTraverseStructure(
+					result = await this.mcpReactTreeTraverseStructure(
 						args as MCPReactTreeTraverseStructureArgs,
 					)
 					break
 				case MCPCommand.ReactTreeHooks:
-					result = this.mcpReactTreeHooks(args as MCPReactTreeHooksArgs)
+					result = await this.mcpReactTreeHooks(args as MCPReactTreeHooksArgs)
 					break
 				default:
 					throw new Error(`Unknown MCP command: ${command}`)
@@ -737,9 +744,7 @@ export class DevToolsClient {
 		const minLevel = args.min_level ?? LogLevel.Debug
 		const depth = args.depth ?? this.settings.log.inspectDepth
 
-		let entries = (this.logs.toArray() as LogEntry[]).filter(
-			entry => entry.level >= minLevel,
-		)
+		let entries = this.logs.filter(entry => entry.level >= minLevel)
 		if (args.limit != null && entries.length > args.limit)
 			entries = entries.slice(-args.limit)
 
@@ -753,20 +758,20 @@ export class DevToolsClient {
 		}
 	}
 
-	private ensureReactCommitHook() {
+	private ensureReactCommitHook(bippy: BippyModule) {
 		if (this.reactCommitHooked) return
 		this.reactCommitHooked = true
 		try {
-			onCommitFiberRoot(root => {
+			bippy.onCommitFiberRoot(root => {
 				this.reactRoot = root.current
 			})
 		} catch {}
 	}
 
-	private getReactRootFiber(): Fiber {
-		this.ensureReactCommitHook()
+	private getReactRootFiber(bippy: BippyModule): Fiber {
+		this.ensureReactCommitHook(bippy)
 
-		const hook = getRDTHook() as any
+		const hook = bippy.getRDTHook() as any
 		if (typeof hook?.getFiberRoots === 'function')
 			for (const id of hook.renderers.keys())
 				for (const root of hook.getFiberRoots(id))
@@ -779,52 +784,59 @@ export class DevToolsClient {
 		)
 	}
 
-	private resolveReactFiber(from?: string): Fiber {
+	private resolveReactFiber(bippy: BippyModule, from?: string): Fiber {
 		if (from != null) {
 			const fiber = this.evalInScope(from)
-			if (!isValidFiber(fiber))
+			if (!bippy.isValidFiber(fiber))
 				throw new Error('`from` must evaluate to a React fiber')
 			return fiber
 		}
 
 		const stored = this.scope.vars.mcp?.reactFiber
 		if (stored != null) {
-			if (!isValidFiber(stored))
+			if (!bippy.isValidFiber(stored))
 				throw new Error('`vars.mcp.reactFiber` is not a valid React fiber')
 			return stored
 		}
 
-		return this.getReactRootFiber()
+		return this.getReactRootFiber(bippy)
 	}
 
-	private describeFiber(fiber: Fiber) {
+	private describeFiber(bippy: BippyModule, fiber: Fiber) {
 		return {
 			name:
-				getDisplayName(fiber.type) ??
+				bippy.getDisplayName(fiber.type) ??
 				(typeof fiber.type === 'string' ? fiber.type : `#${fiber.tag}`),
 			tag: fiber.tag,
 			key: fiber.key,
 		}
 	}
 
-	private mcpReactTreeGetRoot(): unknown {
-		const root = this.getReactRootFiber()
+	private async mcpReactTreeGetRoot(): Promise<unknown> {
+		const bippy = await loadBippy()
+		const root = this.getReactRootFiber(bippy)
 		this.scope.vars.mcp ??= {}
 		this.scope.vars.mcp.reactFiber = root
-		return { stored: 'vars.mcp.reactFiber', fiber: this.describeFiber(root) }
+		return {
+			stored: 'vars.mcp.reactFiber',
+			fiber: this.describeFiber(bippy, root),
+		}
 	}
 
-	private mcpReactTreeMatch(args: MCPReactTreeMatchArgs): unknown {
+	private async mcpReactTreeMatch(
+		args: MCPReactTreeMatchArgs,
+	): Promise<unknown> {
+		const bippy = await loadBippy()
 		const predicate = this.evalExpression(args.predicate)
 		if (typeof predicate !== 'function')
 			throw new Error('`predicate` must evaluate to a function')
 
-		const start = this.resolveReactFiber(args.from)
+		const start = this.resolveReactFiber(bippy, args.from)
 		const maxVisits = args.depth ?? 100
 
 		let visited = 0
 		let exceeded = false
-		const found = traverseFiber(start, fiber => {
+		const found = bippy.traverseFiber(start, fiber => {
 			if (++visited > maxVisits) {
 				exceeded = true
 				return true
@@ -844,7 +856,7 @@ export class DevToolsClient {
 			matched: true,
 			visited,
 			stored: 'vars.mcp.reactFiber',
-			fiber: this.describeFiber(found),
+			fiber: this.describeFiber(bippy, found),
 		}
 	}
 
@@ -887,10 +899,11 @@ export class DevToolsClient {
 		return parts.join(' ')
 	}
 
-	private mcpReactTreeTraverseStructure(
+	private async mcpReactTreeTraverseStructure(
 		args: MCPReactTreeTraverseStructureArgs,
-	): unknown {
-		const start = this.resolveReactFiber(args.from)
+	): Promise<unknown> {
+		const bippy = await loadBippy()
+		const start = this.resolveReactFiber(bippy, args.from)
 		const maxDepth = args.depth ?? 10
 		const showHost = args.showHostComponents ?? false
 		const maxLines = 2000
@@ -899,8 +912,8 @@ export class DevToolsClient {
 		let truncated = false
 
 		const formatLine = (fiber: Fiber, depth: number) => {
-			const { name, key } = this.describeFiber(fiber)
-			const host = showHost && isHostFiber(fiber) ? ' (host)' : ''
+			const { name, key } = this.describeFiber(bippy, fiber)
+			const host = showHost && bippy.isHostFiber(fiber) ? ' (host)' : ''
 			const keyPart = key != null ? ` key=${JSON.stringify(key)}` : ''
 			const props = this.summarizeProps(fiber.memoizedProps)
 			const propsPart = props ? ` ${props}` : ''
@@ -913,7 +926,7 @@ export class DevToolsClient {
 					truncated = true
 					return
 				}
-				if (!showHost && isHostFiber(fiber)) {
+				if (!showHost && bippy.isHostFiber(fiber)) {
 					walk(fiber.child, depth)
 					continue
 				}
@@ -923,7 +936,7 @@ export class DevToolsClient {
 			}
 		}
 
-		if (!showHost && isHostFiber(start)) {
+		if (!showHost && bippy.isHostFiber(start)) {
 			walk(start.child, 0)
 		} else {
 			lines.push(formatLine(start, 0))
@@ -938,8 +951,11 @@ export class DevToolsClient {
 		}
 	}
 
-	private mcpReactTreeHooks(args: MCPReactTreeHooksArgs): unknown {
-		const fiber = this.resolveReactFiber(args.from)
+	private async mcpReactTreeHooks(
+		args: MCPReactTreeHooksArgs,
+	): Promise<unknown> {
+		const bippy = await loadBippy()
+		const fiber = this.resolveReactFiber(bippy, args.from)
 		const limit = args.limit ?? 50
 		const depth = args.depth ?? this.settings.log.inspectDepth
 
@@ -955,7 +971,7 @@ export class DevToolsClient {
 				count: 0,
 				hooks: [],
 				truncated: false,
-				fiber: this.describeFiber(fiber),
+				fiber: this.describeFiber(bippy, fiber),
 				note: 'fiber has no hook chain (not a function component, or not mounted)',
 			}
 
@@ -979,7 +995,7 @@ export class DevToolsClient {
 			count: hooks.length,
 			hooks,
 			truncated,
-			fiber: this.describeFiber(fiber),
+			fiber: this.describeFiber(bippy, fiber),
 		}
 	}
 
@@ -1011,6 +1027,7 @@ export class DevToolsClient {
 			snapshot(item, this.settings.log.inspectDepth),
 		)
 		this.logs.push({ level, time: Date.now(), message: snapped })
+		if (this.logs.length > LOG_BUFFER_CAPACITY) this.logs.shift()
 
 		if (!this.authenticated) return
 		if (level < this.settings.log.level) return
